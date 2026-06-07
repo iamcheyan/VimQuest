@@ -199,7 +199,7 @@ local task_builders = {
     return {
       type = "Replace",
       prompt = "把近义词替换成核心词。",
-      editable = replace_word_once(ex, entry.w, synonym),
+      editable = replace_word_once(ex, entry.w, "{{" .. synonym .. "}}"),
       expected = ex,
       answer = entry.w,
       entry = entry,
