@@ -259,7 +259,7 @@ local active_task_builders = {
   task_builders.replace,
   task_builders.delete,
   task_builders.meaning,
-  -- task_builders.japanese_meaning,
+  task_builders.japanese_meaning,
   -- task_builders.example_translation,
 }
 
