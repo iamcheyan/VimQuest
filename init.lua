@@ -258,7 +258,7 @@ local active_task_builders = {
   task_builders.fill,
   task_builders.replace,
   task_builders.delete,
-  -- task_builders.meaning,
+  task_builders.meaning,
   -- task_builders.japanese_meaning,
   -- task_builders.example_translation,
 }
@@ -318,8 +318,21 @@ local function strip_comment(path, line)
   return text
 end
 
+local input_task_types = {
+  ["Meaning"] = true,
+  ["Japanese Meaning"] = true,
+  ["Example Translation"] = true,
+}
+
+local function is_input_task(task)
+  return input_task_types[task.type] or false
+end
+
 local function task_block(task, index, total)
   local rel = task.file
+  if is_input_task(task) then
+    return { comment_line(rel, task.display or task.editable) }
+  end
   return { comment_line(rel, task.editable) }
 end
 
@@ -637,8 +650,19 @@ function M.check()
   local index = task_index(task)
   state.current = index
 
-  local actual = answer_for_task(task)
-  local correct = actual ~= nil and normalize(actual) == normalize(task.expected)
+  local actual, correct
+  if is_input_task(task) then
+    local input = vim.fn.input(task.type .. " > ")
+    if input == "" then
+      notify("Cancelled.", vim.log.levels.INFO)
+      return
+    end
+    actual = input
+    correct = normalize(actual) == normalize(task.expected)
+  else
+    actual = answer_for_task(task)
+    correct = actual ~= nil and normalize(actual) == normalize(task.expected)
+  end
   state.checked[index] = correct
   recompute_stats()
 
