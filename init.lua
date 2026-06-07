@@ -413,6 +413,16 @@ local function answer_for_task(task)
   return strip_comment(task.file, lines[task.answer_line])
 end
 
+local function next_line_answer_for_task(task)
+  local path = join(state.session_dir, task.file)
+  local lines = buffer_lines_for(path)
+  local next = lines[task.answer_line + 1]
+  if not next then
+    return nil
+  end
+  return strip_comment(task.file, next)
+end
+
 local function task_at_cursor()
   if not state.active then
     return nil
@@ -696,9 +706,17 @@ function M.check()
   elseif task.type == "Replace" then
     actual = answer_for_task(task)
     correct = actual ~= nil and check_replace(task, actual)
+    if not correct then
+      actual = next_line_answer_for_task(task)
+      correct = actual ~= nil and check_replace(task, actual)
+    end
   else
     actual = answer_for_task(task)
     correct = actual ~= nil and normalize(actual) == normalize(task.expected)
+    if not correct then
+      actual = next_line_answer_for_task(task)
+      correct = actual ~= nil and normalize(actual) == normalize(task.expected)
+    end
   end
   state.checked[index] = correct
   recompute_stats()
