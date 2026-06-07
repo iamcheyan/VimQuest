@@ -674,98 +674,6 @@ local function check_replace(task, actual)
   return false
 end
 
-local function word_list()
-  local words = load_words()
-  local list = {}
-  for _, entry in ipairs(words) do
-    table.insert(list, entry.w)
-  end
-  return list
-end
-
-function _G._vimquest_complete(findstart, base)
-  if findstart == 1 then
-    local line = vim.api.nvim_get_current_line()
-    return #line
-  end
-  local prefix = base:lower()
-  local matches = {}
-  for _, w in ipairs(word_list()) do
-    if w:sub(1, #prefix) == prefix then
-      table.insert(matches, w)
-    end
-  end
-  return matches
-end
-
-local function input_with_complete(prompt, callback)
-  local words = word_list()
-  local width = math.max(30, #prompt + 10)
-  local buf = vim.api.nvim_create_buf(false, true)
-  vim.bo[buf].buftype = "nofile"
-  vim.bo[buf].bufhidden = "wipe"
-  vim.bo[buf].completefunc = "v:lua._vimquest_complete"
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "" })
-  local win = vim.api.nvim_open_win(buf, true, {
-    relative = "cursor",
-    row = 1,
-    col = 0,
-    width = width,
-    height = 1,
-    border = "single",
-    title = " " .. prompt .. " ",
-    style = "minimal",
-  })
-  local grp = vim.api.nvim_create_augroup("VimQuestInput", { clear = true })
-  vim.api.nvim_create_autocmd("TextChangedI", {
-    group = grp,
-    buffer = buf,
-    callback = function()
-      local line = vim.api.nvim_get_current_line()
-      if line == "" then return end
-      local col = vim.api.nvim_win_get_cursor(win)[2]
-      local prefix = line:sub(1, col):lower()
-      local matches = {}
-      for _, w in ipairs(words) do
-        if w:sub(1, #prefix) == prefix then
-          table.insert(matches, { word = w, abbr = w })
-        end
-      end
-      if #matches > 0 then
-        vim.fn.complete(1, matches)
-      end
-    end,
-  })
-  vim.cmd("startinsert")
-  local done = false
-  local function cleanup()
-    pcall(vim.api.nvim_del_augroup_by_id, grp)
-    local winid = vim.api.nvim_get_current_win()
-    pcall(vim.api.nvim_win_close, winid, true)
-    vim.cmd("stopinsert")
-  end
-  local function confirm()
-    if done then return end
-    done = true
-    local line = vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] or ""
-    cleanup()
-    callback(line)
-  end
-  local function cancel()
-    if done then return end
-    done = true
-    cleanup()
-    callback(nil)
-  end
-  vim.keymap.set("i", "<CR>", function()
-    if vim.fn.pumvisible() == 1 then
-      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-y>", true, false, true), "n", false)
-    else
-      confirm()
-    end
-  end, { buffer = buf, nowait = true, silent = true })
-  vim.keymap.set("i", "<C-c>", cancel, { buffer = buf, nowait = true, silent = true })
-end
 
 function M.check()
   if not ensure_active() then
@@ -776,66 +684,43 @@ function M.check()
   local index = task_index(task)
   state.current = index
 
-  local function handle_result(actual)
-    if actual == nil or actual == "" then
+  local actual, correct
+  if is_input_task(task) then
+    local input = vim.fn.input(task.type .. " > ")
+    if input == "" then
       notify("Cancelled.", vim.log.levels.INFO)
       return
     end
-    local correct
-    if is_input_task(task) then
-      correct = normalize(actual) == normalize(task.expected)
-    else
-      correct = actual ~= nil and normalize(actual) == normalize(task.expected)
-    end
-    state.checked[index] = correct
-    recompute_stats()
+    actual = input
+    correct = normalize(actual) == normalize(task.expected)
+  elseif task.type == "Replace" then
+    actual = answer_for_task(task)
+    correct = actual ~= nil and check_replace(task, actual)
+  else
+    actual = answer_for_task(task)
+    correct = actual ~= nil and normalize(actual) == normalize(task.expected)
+  end
+  state.checked[index] = correct
+  recompute_stats()
 
-    if correct then
-      pcall(vim.api.nvim_set_option_value, "modified", false, { buf = vim.api.nvim_get_current_buf() })
-      if index < #state.tasks then
-        notify(string.format("Correct. Moving to %d/%d.", index + 1, #state.tasks))
-        state.current = index
-        M.next()
-      else
-        notify(
-          string.format(
-            "Correct. Round complete. Correct %d | Wrong %d | Accuracy %d%%",
-            state.correct,
-            state.wrong,
-            math.floor((state.correct / #state.tasks) * 100 + 0.5)
-          )
+  if correct then
+    pcall(vim.api.nvim_set_option_value, "modified", false, { buf = vim.api.nvim_get_current_buf() })
+    if index < #state.tasks then
+      notify(string.format("Correct. Moving to %d/%d.", index + 1, #state.tasks))
+      state.current = index
+      M.next()
+    else
+      notify(
+        string.format(
+          "Correct. Round complete. Correct %d | Wrong %d | Accuracy %d%%",
+          state.correct,
+          state.wrong,
+          math.floor((state.correct / #state.tasks) * 100 + 0.5)
         )
-      end
-    else
-      notify("Wrong. Stay here and try again.", vim.log.levels.WARN)
-    end
-  end
-
-  if is_input_task(task) then
-    input_with_complete(task.type, handle_result)
-    return
-  end
-
-  local actual = answer_for_task(task)
-  if task.type == "Replace" then
-    local correct = actual ~= nil and check_replace(task, actual)
-    state.checked[index] = correct
-    recompute_stats()
-    if correct then
-      pcall(vim.api.nvim_set_option_value, "modified", false, { buf = vim.api.nvim_get_current_buf() })
-      if index < #state.tasks then
-        notify(string.format("Correct. Moving to %d/%d.", index + 1, #state.tasks))
-        state.current = index
-        M.next()
-      else
-        notify(string.format("Correct. Round complete. Correct %d | Wrong %d | Accuracy %d%%",
-          state.correct, state.wrong, math.floor((state.correct / #state.tasks) * 100 + 0.5)))
-      end
-    else
-      notify("Wrong. Stay here and try again.", vim.log.levels.WARN)
+      )
     end
   else
-    handle_result(actual)
+    notify("Wrong. Stay here and try again.", vim.log.levels.WARN)
   end
 end
 
