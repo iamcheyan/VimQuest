@@ -577,6 +577,14 @@ function M.next()
   open_task(state.current)
 end
 
+function M.prev()
+  if not ensure_active() then
+    return
+  end
+  state.current = (state.current - 2) % #state.tasks + 1
+  open_task(state.current)
+end
+
 function M.next_round()
   if not ensure_active() then
     return
@@ -763,6 +771,7 @@ function M.setup(opts)
   vim.api.nvim_create_user_command("VimQuestStart", M.start, { force = true })
   vim.api.nvim_create_user_command("VimQuestStop", M.stop, { force = true })
   vim.api.nvim_create_user_command("VimQuestNext", M.next, { force = true })
+  vim.api.nvim_create_user_command("VimQuestPrev", M.prev, { force = true })
   vim.api.nvim_create_user_command("VimQuestCheck", M.check, { force = true })
   vim.api.nvim_create_user_command("VimQuestHint", M.hint, { force = true })
   vim.api.nvim_create_user_command("VimQuestStats", M.stats, { force = true })
@@ -770,6 +779,7 @@ function M.setup(opts)
   vim.keymap.set("n", "<leader>qs", M.start, { desc = "VimQuest start" })
   vim.keymap.set("n", "<leader>qx", M.stop, { desc = "VimQuest stop" })
   vim.keymap.set("n", "<leader>qn", M.next, { desc = "VimQuest next" })
+  vim.keymap.set("n", "<leader>qp", M.prev, { desc = "VimQuest prev" })
   vim.keymap.set("n", "<leader>qc", M.check, { desc = "VimQuest check" })
   vim.keymap.set("n", "<leader>qh", M.hint, { desc = "VimQuest hint" })
   vim.keymap.set("n", "<leader>qt", M.stats, { desc = "VimQuest stats" })
