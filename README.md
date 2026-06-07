@@ -7,8 +7,9 @@ A Neovim plugin that turns your codebase into an English vocabulary quiz. VimQue
 1. VimQuest scans your project and randomly selects code files
 2. Copies them to a temporary session directory
 3. Injects vocabulary tasks as code comments (fill-in-the-blank, synonym replacement, etc.)
-4. You edit the answer lines directly in the code, then check your results
-5. After the round, you can start a new round or restore your original project
+4. Adds `Prev: file:line`, `Next: file:line`, and short Vim motion practice hints below each task
+5. You edit the answer lines directly in the code, then check your results
+6. After the round, you can start a new round or restore your original project
 
 ## Task Types
 
@@ -45,6 +46,9 @@ A Neovim plugin that turns your codebase into an English vocabulary quiz. VimQue
 | `:VimQuestStart` | Start a new quiz round |
 | `:VimQuestStop` | Stop and restore the original project |
 | `:VimQuestNext` | Jump to the next task |
+| `:VimQuestPrev` | Jump to the previous task |
+| `:VimQuestTasks` | Search and jump to any task with Telescope |
+| `:VimQuestList` | Put all tasks in the quickfix list |
 | `:VimQuestCheck` | Check all answers and show results |
 | `:VimQuestHint` | Show hint for the task at cursor |
 | `:VimQuestStats` | Show current round statistics |
@@ -56,9 +60,12 @@ A Neovim plugin that turns your codebase into an English vocabulary quiz. VimQue
 | `<leader>qs` | Start |
 | `<leader>qx` | Stop |
 | `<leader>qn` | Next task |
+| `<leader>qp` | Previous task |
+| `<leader>qt` | Search tasks |
+| `<leader>ql` | Quickfix task list |
 | `<leader>qc` | Check answers |
 | `<leader>qh` | Show hint |
-| `<leader>qt` | Show stats |
+| `<leader>qS` | Show stats |
 | `K` | Show hint (when in active session) or LSP hover |
 
 ## Configuration

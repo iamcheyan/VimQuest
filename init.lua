@@ -328,12 +328,39 @@ local function is_input_task(task)
   return input_task_types[task.type] or false
 end
 
+local function task_jump_text(task, label)
+  return string.format("%s: %s:%d", label, task.file, task.answer_line)
+end
+
 local function task_block(task, index, total)
   local rel = task.file
+  local lines
   if is_input_task(task) then
-    return { comment_line(rel, "[Guess] " .. (task.display or task.editable)) }
+    lines = {
+      comment_line(rel, "Prev: pending"),
+      comment_line(rel, "[Guess] " .. (task.display or task.editable)),
+    }
+  else
+    lines = {
+      comment_line(rel, "Prev: pending"),
+      comment_line(rel, task.editable),
+    }
   end
-  return { comment_line(rel, task.editable) }
+  table.insert(lines, comment_line(rel, "Next: pending"))
+  table.insert(lines, comment_line(rel, "Practice: gF, <C-o>, <C-i>, /____, ]q/[q"))
+  return lines
+end
+
+local function set_task_jump_hints(session_dir, tasks)
+  for index, task in ipairs(tasks) do
+    local prev_task = tasks[(index - 2) % #tasks + 1]
+    local next_task = tasks[index % #tasks + 1]
+    local path = join(session_dir, task.file)
+    local lines = vim.fn.readfile(path)
+    lines[task.answer_line - 1] = comment_line(task.file, task_jump_text(prev_task, "Prev"))
+    lines[task.answer_line + 1] = comment_line(task.file, task_jump_text(next_task, "Next"))
+    vim.fn.writefile(lines, path)
+  end
 end
 
 local function insert_tasks_into_files(session_dir, files, tasks)
@@ -347,7 +374,7 @@ local function insert_tasks_into_files(session_dir, files, tasks)
     local path = join(session_dir, rel)
     local lines = vim.fn.readfile(path)
     local insert_at = #lines > 0 and math.random(1, #lines) or 1
-    task.answer_line = insert_at
+    task.answer_line = insert_at + 1
     local block = task_block(task, i, usable)
     for offset, line in ipairs(block) do
       table.insert(lines, insert_at + offset - 1, line)
@@ -358,6 +385,8 @@ local function insert_tasks_into_files(session_dir, files, tasks)
   while #tasks > usable do
     table.remove(tasks)
   end
+
+  set_task_jump_hints(session_dir, tasks)
 end
 
 local function ensure_active()
@@ -416,11 +445,14 @@ end
 local function next_line_answer_for_task(task)
   local path = join(state.session_dir, task.file)
   local lines = buffer_lines_for(path)
-  local next = lines[task.answer_line + 1]
-  if not next then
-    return nil
+  for line_number = task.answer_line + 1, #lines do
+    local next = lines[line_number]
+    local text = strip_comment(task.file, next)
+    if not (text:match("^Prev: .+:%d+$") or text:match("^Next: .+:%d+$") or text:match("^Practice: ")) then
+      return text
+    end
   end
-  return strip_comment(task.file, next)
+  return nil
 end
 
 local function task_at_cursor()
@@ -448,6 +480,39 @@ local function task_index(target)
     end
   end
   return state.current
+end
+
+local function task_status(index)
+  if state.checked[index] == nil then
+    return "todo"
+  end
+  return state.checked[index] and "ok" or "wrong"
+end
+
+local function task_label(index, task)
+  return string.format(
+    "%02d/%02d [%s] %s:%d %s",
+    index,
+    #state.tasks,
+    task.type,
+    task.file,
+    task.answer_line,
+    task_status(index)
+  )
+end
+
+local function task_search_text(index, task)
+  local entry = task.entry or {}
+  return table.concat({
+    task_label(index, task),
+    task.prompt or "",
+    task.expected or "",
+    task.answer or "",
+    entry.w or "",
+    entry.zh or "",
+    entry.ja or "",
+    entry.en or "",
+  }, " ")
 end
 
 local function recompute_stats()
@@ -593,6 +658,83 @@ function M.prev()
   end
   state.current = (state.current - 2) % #state.tasks + 1
   open_task(state.current)
+end
+
+function M.list()
+  if not ensure_active() then
+    return
+  end
+
+  local items = {}
+  for index, task in ipairs(state.tasks) do
+    table.insert(items, {
+      filename = join(state.session_dir, task.file),
+      lnum = task.answer_line,
+      col = 1,
+      text = task_label(index, task),
+    })
+  end
+  vim.fn.setqflist({}, " ", {
+    title = "VimQuest Tasks",
+    items = items,
+  })
+  vim.cmd.copen()
+  notify(string.format("Loaded %d VimQuest tasks into quickfix.", #items))
+end
+
+function M.tasks()
+  if not ensure_active() then
+    return
+  end
+
+  local ok, pickers = pcall(require, "telescope.pickers")
+  if not ok then
+    notify("Telescope is not available.", vim.log.levels.WARN)
+    return
+  end
+  local finders = require("telescope.finders")
+  local conf = require("telescope.config").values
+  local actions = require("telescope.actions")
+  local action_state = require("telescope.actions.state")
+
+  local results = {}
+  for index, task in ipairs(state.tasks) do
+    table.insert(results, {
+      index = index,
+      task = task,
+      display = task_label(index, task),
+      ordinal = task_search_text(index, task),
+    })
+  end
+
+  pickers
+    .new({}, {
+      prompt_title = "VimQuest Tasks",
+      finder = finders.new_table({
+        results = results,
+        entry_maker = function(entry)
+          return {
+            value = entry,
+            display = entry.display,
+            ordinal = entry.ordinal,
+          }
+        end,
+      }),
+      sorter = conf.generic_sorter({}),
+      attach_mappings = function(prompt_bufnr)
+        actions.select_default:replace(function()
+          local selection = action_state.get_selected_entry()
+          actions.close(prompt_bufnr)
+          if not selection then
+            return
+          end
+          state.current = selection.value.index
+          open_task(state.current)
+        end)
+        return true
+      end,
+    })
+    :find()
 end
 
 function M.next_round()
@@ -820,13 +962,23 @@ function M.setup(opts)
   vim.api.nvim_create_autocmd("VimEnter", {
     group = vim.api.nvim_create_augroup("VimQuestCleanup", { clear = true }),
     callback = function()
-      cleanup_old_sessions()
       local prefix = vim.fn.expand("~/.cache/vimquest/session-")
       for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
         local name = vim.api.nvim_buf_get_name(bufnr)
         if name:sub(1, #prefix) == prefix then
+          pcall(vim.api.nvim_set_option_value, "modified", false, { buf = bufnr })
           pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
         end
+      end
+      cleanup_old_sessions()
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("VimLeavePre", {
+    group = vim.api.nvim_create_augroup("VimQuestExitCleanup", { clear = true }),
+    callback = function()
+      if state.active then
+        M.stop()
       end
     end,
   })
@@ -835,6 +987,8 @@ function M.setup(opts)
   vim.api.nvim_create_user_command("VimQuestStop", M.stop, { force = true })
   vim.api.nvim_create_user_command("VimQuestNext", M.next, { force = true })
   vim.api.nvim_create_user_command("VimQuestPrev", M.prev, { force = true })
+  vim.api.nvim_create_user_command("VimQuestTasks", M.tasks, { force = true })
+  vim.api.nvim_create_user_command("VimQuestList", M.list, { force = true })
   vim.api.nvim_create_user_command("VimQuestCheck", M.check, { force = true })
   vim.api.nvim_create_user_command("VimQuestHint", M.hint, { force = true })
   vim.api.nvim_create_user_command("VimQuestStats", M.stats, { force = true })
@@ -843,9 +997,11 @@ function M.setup(opts)
   vim.keymap.set("n", "<leader>qx", M.stop, { desc = "VimQuest stop" })
   vim.keymap.set("n", "<leader>qn", M.next, { desc = "VimQuest next" })
   vim.keymap.set("n", "<leader>qp", M.prev, { desc = "VimQuest prev" })
+  vim.keymap.set("n", "<leader>qt", M.tasks, { desc = "VimQuest tasks" })
+  vim.keymap.set("n", "<leader>ql", M.list, { desc = "VimQuest quickfix list" })
   vim.keymap.set("n", "<leader>qc", M.check, { desc = "VimQuest check" })
   vim.keymap.set("n", "<leader>qh", M.hint, { desc = "VimQuest hint" })
-  vim.keymap.set("n", "<leader>qt", M.stats, { desc = "VimQuest stats" })
+  vim.keymap.set("n", "<leader>qS", M.stats, { desc = "VimQuest stats" })
   vim.keymap.set("n", "K", function()
     if state.active then
       M.hint()

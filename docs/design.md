@@ -44,12 +44,15 @@ VimQuest then:
 7. Switches the current working directory to the temporary session directory.
 8. Automatically jumps to the first task line.
 
-From the user's point of view, they are editing project files, not a quiz sheet. The first gameplay only shows a single fill-in-the-blank sentence in the copied file. The extra instructions are hidden behind `K`, so the file does not look like a large quiz block.
+From the user's point of view, they are editing project files, not a quiz sheet. Each task is a small comment block in the copied file: `Prev: file:line` sits above the answer line, `Next: file:line` sits below it, followed by a short Vim motion practice hint.
 
 Example visible task line:
 
 ```js
+// Prev: src/previous-task.js:18
 // The ____ time I met you.
+// Next: src/other-task.js:42
+// Practice: gF, <C-o>, <C-i>, /____, ]q/[q
 ```
 
 The user edits that line directly:
@@ -61,6 +64,10 @@ The user edits that line directly:
 The user can move between tasks with:
 
 - `<leader>qn` / `:VimQuestNext`
+- `<leader>qt` / `:VimQuestTasks`
+- `:VimQuestList` and quickfix motions
+- `gF` on the path part of the `Prev: file:line` or `Next: file:line` reminders below a task
+- `<C-o>` / `<C-i>` after jumps, `/____` search, and quickfix `]q` / `[q`
 - normal Vim navigation across the opened tab pages
 - searching for `____`
 
@@ -143,6 +150,9 @@ The real project is never written by VimQuest. All task edits happen under `~/.c
 | `:VimQuestStart` | Start a new session and round. |
 | `:VimQuestStop` | Restore the original project and remove the temp copy. |
 | `:VimQuestNext` | Jump to the next task. |
+| `:VimQuestPrev` | Jump to the previous task. |
+| `:VimQuestTasks` | Open a Telescope picker for fuzzy task search and jump. |
+| `:VimQuestList` | Populate the quickfix list with all task locations. |
 | `:VimQuestCheck` | Submit the current task. Correct answers auto-jump; wrong answers stay. |
 | `:VimQuestHint` | Show the requirement and hint for the task under the cursor. |
 | `:VimQuestStats` | Show current round progress. |
@@ -154,9 +164,12 @@ The real project is never written by VimQuest. All task edits happen under `~/.c
 | `<leader>qs` | Start VimQuest. |
 | `<leader>qx` | Stop VimQuest. |
 | `<leader>qn` | Jump to next task. |
+| `<leader>qp` | Jump to previous task. |
+| `<leader>qt` | Search tasks with Telescope. |
+| `<leader>ql` | Open the quickfix task list. |
 | `<leader>qc` | Submit current task. |
 | `<leader>qh` | Show hint. |
-| `<leader>qt` | Show stats. |
+| `<leader>qS` | Show stats. |
 | `K` | In a VimQuest session, show hint for the task under cursor; otherwise fall back to LSP hover. |
 
 ## Task Types
@@ -329,8 +342,7 @@ The implementation enforces this by:
 ## Possible Next Steps
 
 - Open 8 or 10 files by default instead of 5.
-- Add a quickfix list containing all task locations.
-- Add `:VimQuestList` to jump between tasks.
+- Refresh task line tracking after edits above inserted task lines.
 - Add safer insertion strategies per filetype.
 - Add per-word memory or spaced repetition later, still offline.
 - Add a session recovery command for stale temp directories.
