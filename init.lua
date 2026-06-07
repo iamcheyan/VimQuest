@@ -815,6 +815,20 @@ end
 function M.setup(opts)
   config = vim.tbl_deep_extend("force", config, opts or {})
 
+  vim.api.nvim_create_autocmd("VimEnter", {
+    group = vim.api.nvim_create_augroup("VimQuestCleanup", { clear = true }),
+    callback = function()
+      cleanup_old_sessions()
+      local prefix = vim.fn.expand("~/.cache/vimquest/session-")
+      for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+        local name = vim.api.nvim_buf_get_name(bufnr)
+        if name:sub(1, #prefix) == prefix then
+          pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+        end
+      end
+    end,
+  })
+
   vim.api.nvim_create_user_command("VimQuestStart", M.start, { force = true })
   vim.api.nvim_create_user_command("VimQuestStop", M.stop, { force = true })
   vim.api.nvim_create_user_command("VimQuestNext", M.next, { force = true })
