@@ -649,6 +649,31 @@ local function show_check_report(results)
   return win
 end
 
+local function check_replace(task, actual)
+  local cleaned = actual:gsub("%{%{", ""):gsub("%}%}", "")
+  if normalize(cleaned) == normalize(task.expected) then
+    return true
+  end
+  local word = task.answer
+  local synonyms = task.entry.s or {}
+  local pattern = "(%f[%a])" .. vim.pesc(word) .. "(%f[%A])"
+  local replaced = cleaned:match(pattern)
+  if replaced and normalize(replaced) == normalize(word) then
+    return true
+  end
+  for _, syn in ipairs(synonyms) do
+    local pat = "(%f[%a])" .. vim.pesc(syn) .. "(%f[%A])"
+    if cleaned:match(pat) then
+      local without = cleaned:gsub(pat, "____", 1)
+      local expected_without = task.expected:gsub(pattern, "____", 1)
+      if normalize(without) == normalize(expected_without) then
+        return true
+      end
+    end
+  end
+  return false
+end
+
 function M.check()
   if not ensure_active() then
     return
@@ -669,7 +694,11 @@ function M.check()
     correct = normalize(actual) == normalize(task.expected)
   else
     actual = answer_for_task(task)
-    correct = actual ~= nil and normalize(actual) == normalize(task.expected)
+    if actual ~= nil and task.type == "Replace" then
+      correct = check_replace(task, actual)
+    else
+      correct = actual ~= nil and normalize(actual) == normalize(task.expected)
+    end
   end
   state.checked[index] = correct
   recompute_stats()
