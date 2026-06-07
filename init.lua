@@ -674,6 +674,98 @@ local function check_replace(task, actual)
   return false
 end
 
+local function word_list()
+  local words = load_words()
+  local list = {}
+  for _, entry in ipairs(words) do
+    table.insert(list, entry.w)
+  end
+  return list
+end
+
+function _G._vimquest_complete(findstart, base)
+  if findstart == 1 then
+    local line = vim.api.nvim_get_current_line()
+    return #line
+  end
+  local prefix = base:lower()
+  local matches = {}
+  for _, w in ipairs(word_list()) do
+    if w:sub(1, #prefix) == prefix then
+      table.insert(matches, w)
+    end
+  end
+  return matches
+end
+
+local function input_with_complete(prompt, callback)
+  local width = math.max(30, #prompt + 10)
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[buf].buftype = "nofile"
+  vim.bo[buf].bufhidden = "wipe"
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "" })
+  local win = vim.api.nvim_open_win(buf, true, {
+    relative = "cursor",
+    row = 1,
+    col = 0,
+    width = width,
+    height = 1,
+    border = "single",
+    title = " " .. prompt .. " ",
+    style = "minimal",
+  })
+  vim.cmd("startinsert")
+  local done = false
+  local function confirm()
+    if done then return end
+    done = true
+    local line = vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] or ""
+    local winid = vim.api.nvim_get_current_win()
+    pcall(vim.api.nvim_win_close, winid, true)
+    vim.cmd("stopinsert")
+    callback(line)
+  end
+  local function cancel()
+    if done then return end
+    done = true
+    local winid = vim.api.nvim_get_current_win()
+    pcall(vim.api.nvim_win_close, winid, true)
+    vim.cmd("stopinsert")
+    callback(nil)
+  end
+  vim.keymap.set("i", "<CR>", confirm, { buffer = buf, nowait = true, silent = true })
+  vim.keymap.set("i", "<C-c>", cancel, { buffer = buf, nowait = true, silent = true })
+  vim.keymap.set("i", "<Tab>", function()
+    local line = vim.api.nvim_get_current_line()
+    local col = vim.api.nvim_win_get_cursor(win)[2]
+    local prefix = line:sub(1, col):lower()
+    local matches = {}
+    for _, w in ipairs(word_list()) do
+      if w:sub(1, #prefix) == prefix then
+        table.insert(matches, w)
+      end
+    end
+    if #matches == 1 then
+      vim.api.nvim_buf_set_lines(buf, 0, 1, false, { matches[1] })
+      vim.api.nvim_win_set_cursor(win, { 1, #matches[1] })
+    elseif #matches > 1 then
+      local common = matches[1]
+      for i = 2, #matches do
+        local m = matches[i]
+        local j = #common
+        while j > 0 and m:sub(1, j) ~= common:sub(1, j) do
+          j = j - 1
+        end
+        common = common:sub(1, j)
+      end
+      if #common > #prefix then
+        vim.api.nvim_buf_set_lines(buf, 0, 1, false, { common })
+        vim.api.nvim_win_set_cursor(win, { 1, #common })
+      end
+    end
+  end, { buffer = buf, nowait = true, silent = true })
+end
+
 function M.check()
   if not ensure_active() then
     return
@@ -683,44 +775,66 @@ function M.check()
   local index = task_index(task)
   state.current = index
 
-  local actual, correct
-  if is_input_task(task) then
-    local input = vim.fn.input(task.type .. " > ")
-    if input == "" then
+  local function handle_result(actual)
+    if actual == nil or actual == "" then
       notify("Cancelled.", vim.log.levels.INFO)
       return
     end
-    actual = input
-    correct = normalize(actual) == normalize(task.expected)
-  else
-    actual = answer_for_task(task)
-    if actual ~= nil and task.type == "Replace" then
-      correct = check_replace(task, actual)
+    local correct
+    if is_input_task(task) then
+      correct = normalize(actual) == normalize(task.expected)
     else
       correct = actual ~= nil and normalize(actual) == normalize(task.expected)
     end
-  end
-  state.checked[index] = correct
-  recompute_stats()
+    state.checked[index] = correct
+    recompute_stats()
 
-  if correct then
-    pcall(vim.api.nvim_set_option_value, "modified", false, { buf = vim.api.nvim_get_current_buf() })
-    if index < #state.tasks then
-      notify(string.format("Correct. Moving to %d/%d.", index + 1, #state.tasks))
-      state.current = index
-      M.next()
-    else
-      notify(
-        string.format(
-          "Correct. Round complete. Correct %d | Wrong %d | Accuracy %d%%",
-          state.correct,
-          state.wrong,
-          math.floor((state.correct / #state.tasks) * 100 + 0.5)
+    if correct then
+      pcall(vim.api.nvim_set_option_value, "modified", false, { buf = vim.api.nvim_get_current_buf() })
+      if index < #state.tasks then
+        notify(string.format("Correct. Moving to %d/%d.", index + 1, #state.tasks))
+        state.current = index
+        M.next()
+      else
+        notify(
+          string.format(
+            "Correct. Round complete. Correct %d | Wrong %d | Accuracy %d%%",
+            state.correct,
+            state.wrong,
+            math.floor((state.correct / #state.tasks) * 100 + 0.5)
+          )
         )
-      )
+      end
+    else
+      notify("Wrong. Stay here and try again.", vim.log.levels.WARN)
+    end
+  end
+
+  if is_input_task(task) then
+    input_with_complete(task.type, handle_result)
+    return
+  end
+
+  local actual = answer_for_task(task)
+  if task.type == "Replace" then
+    local correct = actual ~= nil and check_replace(task, actual)
+    state.checked[index] = correct
+    recompute_stats()
+    if correct then
+      pcall(vim.api.nvim_set_option_value, "modified", false, { buf = vim.api.nvim_get_current_buf() })
+      if index < #state.tasks then
+        notify(string.format("Correct. Moving to %d/%d.", index + 1, #state.tasks))
+        state.current = index
+        M.next()
+      else
+        notify(string.format("Correct. Round complete. Correct %d | Wrong %d | Accuracy %d%%",
+          state.correct, state.wrong, math.floor((state.correct / #state.tasks) * 100 + 0.5)))
+      end
+    else
+      notify("Wrong. Stay here and try again.", vim.log.levels.WARN)
     end
   else
-    notify("Wrong. Stay here and try again.", vim.log.levels.WARN)
+    handle_result(actual)
   end
 end
 
