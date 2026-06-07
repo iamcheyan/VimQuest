@@ -331,7 +331,7 @@ end
 local function task_block(task, index, total)
   local rel = task.file
   if is_input_task(task) then
-    return { comment_line(rel, task.display or task.editable) }
+    return { comment_line(rel, "[Guess] " .. (task.display or task.editable)) }
   end
   return { comment_line(rel, task.editable) }
 end
