@@ -656,6 +656,7 @@ local function show_check_report(results)
     style = "minimal",
   })
   vim.keymap.set("n", "<Esc>", "<cmd>close<cr>", { buffer = buf, nowait = true, silent = true })
+  vim.keymap.set("n", "q", "<cmd>close<cr>", { buffer = buf, nowait = true, silent = true })
   return win
 end
 
@@ -801,6 +802,7 @@ function M.hint()
   })
   vim.api.nvim_win_set_cursor(win, {2, 0})
   vim.keymap.set("n", "<Esc>", "<cmd>close<cr>", { buffer = buf, nowait = true, silent = true })
+  vim.keymap.set("n", "q", "<cmd>close<cr>", { buffer = buf, nowait = true, silent = true })
 end
 
 function M.stats()
