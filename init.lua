@@ -699,10 +699,12 @@ function _G._vimquest_complete(findstart, base)
 end
 
 local function input_with_complete(prompt, callback)
+  local words = word_list()
   local width = math.max(30, #prompt + 10)
   local buf = vim.api.nvim_create_buf(false, true)
   vim.bo[buf].buftype = "nofile"
   vim.bo[buf].bufhidden = "wipe"
+  vim.bo[buf].completefunc = "v:lua._vimquest_complete"
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "" })
   local win = vim.api.nvim_open_win(buf, true, {
     relative = "cursor",
@@ -714,56 +716,55 @@ local function input_with_complete(prompt, callback)
     title = " " .. prompt .. " ",
     style = "minimal",
   })
+  local grp = vim.api.nvim_create_augroup("VimQuestInput", { clear = true })
+  vim.api.nvim_create_autocmd("TextChangedI", {
+    group = grp,
+    buffer = buf,
+    callback = function()
+      local line = vim.api.nvim_get_current_line()
+      if line == "" then return end
+      local col = vim.api.nvim_win_get_cursor(win)[2]
+      local prefix = line:sub(1, col):lower()
+      local matches = {}
+      for _, w in ipairs(words) do
+        if w:sub(1, #prefix) == prefix then
+          table.insert(matches, { word = w, abbr = w })
+        end
+      end
+      if #matches > 0 then
+        vim.fn.complete(1, matches)
+      end
+    end,
+  })
   vim.cmd("startinsert")
   local done = false
+  local function cleanup()
+    pcall(vim.api.nvim_del_augroup_by_id, grp)
+    local winid = vim.api.nvim_get_current_win()
+    pcall(vim.api.nvim_win_close, winid, true)
+    vim.cmd("stopinsert")
+  end
   local function confirm()
     if done then return end
     done = true
     local line = vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] or ""
-    local winid = vim.api.nvim_get_current_win()
-    pcall(vim.api.nvim_win_close, winid, true)
-    vim.cmd("stopinsert")
+    cleanup()
     callback(line)
   end
   local function cancel()
     if done then return end
     done = true
-    local winid = vim.api.nvim_get_current_win()
-    pcall(vim.api.nvim_win_close, winid, true)
-    vim.cmd("stopinsert")
+    cleanup()
     callback(nil)
   end
-  vim.keymap.set("i", "<CR>", confirm, { buffer = buf, nowait = true, silent = true })
-  vim.keymap.set("i", "<C-c>", cancel, { buffer = buf, nowait = true, silent = true })
-  vim.keymap.set("i", "<Tab>", function()
-    local line = vim.api.nvim_get_current_line()
-    local col = vim.api.nvim_win_get_cursor(win)[2]
-    local prefix = line:sub(1, col):lower()
-    local matches = {}
-    for _, w in ipairs(word_list()) do
-      if w:sub(1, #prefix) == prefix then
-        table.insert(matches, w)
-      end
-    end
-    if #matches == 1 then
-      vim.api.nvim_buf_set_lines(buf, 0, 1, false, { matches[1] })
-      vim.api.nvim_win_set_cursor(win, { 1, #matches[1] })
-    elseif #matches > 1 then
-      local common = matches[1]
-      for i = 2, #matches do
-        local m = matches[i]
-        local j = #common
-        while j > 0 and m:sub(1, j) ~= common:sub(1, j) do
-          j = j - 1
-        end
-        common = common:sub(1, j)
-      end
-      if #common > #prefix then
-        vim.api.nvim_buf_set_lines(buf, 0, 1, false, { common })
-        vim.api.nvim_win_set_cursor(win, { 1, #common })
-      end
+  vim.keymap.set("i", "<CR>", function()
+    if vim.fn.pumvisible() == 1 then
+      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<C-y>", true, false, true), "n", false)
+    else
+      confirm()
     end
   end, { buffer = buf, nowait = true, silent = true })
+  vim.keymap.set("i", "<C-c>", cancel, { buffer = buf, nowait = true, silent = true })
 end
 
 function M.check()
