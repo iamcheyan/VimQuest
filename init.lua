@@ -256,8 +256,7 @@ local task_builders = {
 
 local active_task_builders = {
   task_builders.fill,
-  -- Future rounds can re-enable these after the first gameplay is polished:
-  -- task_builders.replace,
+  task_builders.replace,
   -- task_builders.delete,
   -- task_builders.meaning,
   -- task_builders.japanese_meaning,
@@ -321,19 +320,7 @@ end
 
 local function task_block(task, index, total)
   local rel = task.file
-  local lines = {
-    comment_line(rel, string.format("NOTE(vimquest): wording cleanup %d/%d", index, total)),
-    comment_line(rel, string.format("vimquest:id=%s type=fill", task.id)),
-    comment_line(rel, task.prompt),
-  }
-  vim.list_extend(lines, {
-    comment_line(rel, "Example: " .. task.editable),
-    comment_line(rel, "Answer:"),
-    comment_line(rel, task.editable),
-    comment_line(rel, "Press K here for a hint, then submit with :VimQuestCheck."),
-    comment_line(rel, string.format("vimquest:end=%s", task.id)),
-  })
-  return lines
+  return { comment_line(rel, task.editable) }
 end
 
 local function insert_tasks_into_files(session_dir, files, tasks)
@@ -347,6 +334,7 @@ local function insert_tasks_into_files(session_dir, files, tasks)
     local path = join(session_dir, rel)
     local lines = vim.fn.readfile(path)
     local insert_at = #lines > 0 and math.random(1, #lines) or 1
+    task.answer_line = insert_at
     local block = task_block(task, i, usable)
     for offset, line in ipairs(block) do
       table.insert(lines, insert_at + offset - 1, line)
@@ -374,11 +362,8 @@ local function open_task(index)
   end
   local path = join(state.session_dir, task.file)
   vim.cmd.edit(vim.fn.fnameescape(path))
-  local found = vim.fn.search("vimquest:id=" .. task.id, "w")
-  if found > 0 then
-    vim.api.nvim_win_set_cursor(0, { found, 0 })
-    vim.cmd.normal({ args = { "zz" }, bang = true })
-  end
+  pcall(vim.api.nvim_win_set_cursor, 0, { task.answer_line, 0 })
+  vim.cmd.normal({ args = { "zz" }, bang = true })
   notify(string.format("Task %d/%d | %s", index, #state.tasks, task.file))
 end
 
@@ -412,20 +397,7 @@ end
 local function answer_for_task(task)
   local path = join(state.session_dir, task.file)
   local lines = buffer_lines_for(path)
-  local in_task = false
-  local saw_answer = false
-  for _, line in ipairs(lines) do
-    if line:find("vimquest:id=" .. task.id, 1, true) then
-      in_task = true
-    elseif in_task and line:find("vimquest:end=" .. task.id, 1, true) then
-      return nil
-    elseif in_task and saw_answer then
-      return strip_comment(task.file, line)
-    elseif in_task and strip_comment(task.file, line):match("^Answer:%s*$") then
-      saw_answer = true
-    end
-  end
-  return nil
+  return strip_comment(task.file, lines[task.answer_line])
 end
 
 local function task_at_cursor()
@@ -438,24 +410,59 @@ local function task_at_cursor()
   end
   local rel = vim.fn.fnamemodify(current, ":.")
   local row = vim.api.nvim_win_get_cursor(0)[1]
-  local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
   for _, task in ipairs(state.tasks) do
-    if task.file == rel then
-      local start_line, end_line
-      for i, line in ipairs(lines) do
-        if line:find("vimquest:id=" .. task.id, 1, true) then
-          start_line = i
-        elseif line:find("vimquest:end=" .. task.id, 1, true) then
-          end_line = i
-          break
-        end
-      end
-      if start_line and end_line and row >= start_line and row <= end_line then
-        return task
-      end
+    if task.file == rel and row == task.answer_line then
+      return task
     end
   end
   return state.tasks[state.current]
+end
+
+local function task_index(target)
+  for i, task in ipairs(state.tasks) do
+    if task == target then
+      return i
+    end
+  end
+  return state.current
+end
+
+local function recompute_stats()
+  state.correct = 0
+  state.wrong = 0
+  for _, correct in pairs(state.checked) do
+    if correct then
+      state.correct = state.correct + 1
+    else
+      state.wrong = state.wrong + 1
+    end
+  end
+end
+
+local function wipe_temp_buffers(session_dir)
+  if not session_dir then
+    return
+  end
+  local prefix = session_dir:gsub("/$", "") .. "/"
+  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+    local name = vim.api.nvim_buf_get_name(bufnr)
+    if name:sub(1, #prefix) == prefix then
+      pcall(vim.api.nvim_set_option_value, "modified", false, { buf = bufnr })
+      pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+    end
+  end
+end
+
+local function cleanup_old_sessions()
+  local cache_dir = vim.fn.expand("~/.cache/vimquest")
+  if vim.fn.isdirectory(cache_dir) == 0 then
+    return
+  end
+  for _, entry in ipairs(vim.fn.readdir(cache_dir)) do
+    if entry:match("^session%-") then
+      vim.fn.delete(join(cache_dir, entry), "rf")
+    end
+  end
 end
 
 local function start_session(cwd, original)
@@ -499,7 +506,7 @@ local function start_session(cwd, original)
   open_task(1)
   notify(
     string.format(
-      "Round started: %d fill tasks inserted. %d files opened. Search for vimquest:id.",
+      "Round started: %d fill tasks inserted. %d files opened. Search ____ or use <leader>qn.",
       #state.tasks,
       math.min(#state.tasks, math.max(5, config.open_file_count))
     )
@@ -511,6 +518,8 @@ function M.start()
     notify("VimQuest session is already active.", vim.log.levels.WARN)
     return
   end
+
+  cleanup_old_sessions()
 
   start_session(vim.fn.getcwd(), {
     cwd = vim.fn.getcwd(),
@@ -536,6 +545,7 @@ function M.stop()
   if original and original.cwd then
     vim.cmd.tcd(vim.fn.fnameescape(original.cwd))
   end
+  wipe_temp_buffers(session_dir)
   if original and original.file and original.file ~= "" and exists(original.file) then
     vim.cmd.edit(vim.fn.fnameescape(original.file))
     pcall(vim.api.nvim_win_set_cursor, 0, original.cursor)
@@ -623,37 +633,34 @@ function M.check()
     return
   end
 
-  state.correct = 0
-  state.wrong = 0
-  state.checked = {}
+  local task = task_at_cursor()
+  local index = task_index(task)
+  state.current = index
 
-  local results = {}
-  for i, task in ipairs(state.tasks) do
-    local actual = answer_for_task(task)
-    local correct = actual ~= nil and normalize(actual) == normalize(task.expected)
-    if correct then
-      state.correct = state.correct + 1
+  local actual = answer_for_task(task)
+  local correct = actual ~= nil and normalize(actual) == normalize(task.expected)
+  state.checked[index] = correct
+  recompute_stats()
+
+  if correct then
+    pcall(vim.api.nvim_set_option_value, "modified", false, { buf = vim.api.nvim_get_current_buf() })
+    if index < #state.tasks then
+      notify(string.format("Correct. Moving to %d/%d.", index + 1, #state.tasks))
+      state.current = index
+      M.next()
     else
-      state.wrong = state.wrong + 1
+      notify(
+        string.format(
+          "Correct. Round complete. Correct %d | Wrong %d | Accuracy %d%%",
+          state.correct,
+          state.wrong,
+          math.floor((state.correct / #state.tasks) * 100 + 0.5)
+        )
+      )
     end
-    state.checked[i] = correct
-    table.insert(results, { task = task, actual = actual, correct = correct })
+  else
+    notify("Wrong. Stay here and try again.", vim.log.levels.WARN)
   end
-
-  local report_win = show_check_report(results)
-  if #vim.api.nvim_list_uis() == 0 then
-    return
-  end
-  vim.ui.select({ "Start next round", "Stay in this round" }, {
-    prompt = "VimQuest: start a new round?",
-  }, function(choice)
-    if choice == "Start next round" then
-      if report_win and vim.api.nvim_win_is_valid(report_win) then
-        vim.api.nvim_win_close(report_win, true)
-      end
-      M.next_round()
-    end
-  end)
 end
 
 function M.hint()
@@ -666,39 +673,44 @@ function M.hint()
     return
   end
   local entry = task.entry
+  local use_ja = math.random() > 0.5
+  local synonyms = entry.s and table.concat(entry.s, ", ") or ""
   local lines = {
-    "Word:",
-    entry.w or "",
+    "**" .. (entry.w or "") .. "**",
     "",
-    "Chinese:",
-    entry.zh or "",
+    "Definition: " .. (entry.en or ""),
     "",
-    "Japanese:",
-    entry.ja or "",
+    "Example: " .. (entry.ex or ""),
     "",
-    "English Definition:",
-    entry.en or "",
-    "",
-    "Example:",
-    entry.ex or "",
-    "",
-    "Chinese Example:",
-    entry.exz or "",
-    "",
-    "Japanese Example:",
-    entry.exj or "",
-    "",
-    "Core Meaning:",
-    entry.core or "",
+    "Synonyms: " .. synonyms,
   }
+  if use_ja then
+    vim.list_extend(lines, {
+      "",
+      "Japanese: " .. (entry.ja or ""),
+      "",
+      "Example (ja): " .. (entry.exj or ""),
+      "",
+      "Core (ja): " .. (entry.core_ja or ""),
+    })
+  else
+    vim.list_extend(lines, {
+      "",
+      "Chinese: " .. (entry.zh or ""),
+      "",
+      "Example (zh): " .. (entry.exz or ""),
+      "",
+      "Core: " .. (entry.core or ""),
+    })
+  end
 
   local width = math.min(72, math.max(40, vim.o.columns - 8))
-  local height = math.min(#lines, math.max(10, vim.o.lines - 6))
+  local height = math.min(#lines, math.max(16, vim.o.lines - 6))
   local buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].bufhidden = "wipe"
   vim.bo[buf].filetype = "markdown"
-  vim.api.nvim_open_win(buf, true, {
+  local win = vim.api.nvim_open_win(buf, true, {
     relative = "cursor",
     row = 1,
     col = 1,
@@ -708,6 +720,7 @@ function M.hint()
     title = " VimQuest Hint ",
     style = "minimal",
   })
+  vim.api.nvim_win_set_cursor(win, {2, 0})
   vim.keymap.set("n", "q", "<cmd>close<cr>", { buffer = buf, nowait = true, silent = true })
 end
 
