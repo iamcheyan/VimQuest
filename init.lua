@@ -519,7 +519,7 @@ local function start_session(cwd, original)
   open_task(1)
   notify(
     string.format(
-      "Round started: %d fill tasks inserted. %d files opened. Search ____ or use <leader>qn.",
+      "Round started: %d tasks inserted. %d files opened. Use <leader>qn to navigate.",
       #state.tasks,
       math.min(#state.tasks, math.max(5, config.open_file_count))
     )

@@ -39,24 +39,34 @@ VimQuest then:
 ~/.cache/vimquest/session-*/
 ```
 
-5. Inserts 10 vocabulary tasks into those copied files.
+5. Inserts 10 fill-in-the-blank tasks into those copied files.
 6. Opens at least 5 random copied task files as Neovim tab pages.
 7. Switches the current working directory to the temporary session directory.
+8. Automatically jumps to the first task line.
 
-From the user's point of view, they are editing project files, not a quiz sheet. The task is to move around the temporary project, find `VIMQUEST TASK` comment blocks, edit the answer line, and then submit the round.
+From the user's point of view, they are editing project files, not a quiz sheet. The first gameplay only shows a single fill-in-the-blank sentence in the copied file. The extra instructions are hidden behind `K`, so the file does not look like a large quiz block.
 
-The user can search for tasks with normal Vim/project tools, for example:
+Example visible task line:
 
-```vim
-/VIMQUEST TASK
-:vimgrep /VIMQUEST TASK/ **/*
+```js
+// The ____ time I met you.
 ```
 
-or any configured picker/grep workflow.
+The user edits that line directly:
+
+```js
+// The first time I met you.
+```
+
+The user can move between tasks with:
+
+- `<leader>qn` / `:VimQuestNext`
+- normal Vim navigation across the opened tab pages
+- searching for `____`
 
 ## Task Format
 
-Each copied file receives one comment block. The comment syntax depends on the file extension when possible:
+Each copied file receives one visible fill-in-the-blank sentence. The sentence is inserted as a comment using the file's comment syntax when possible:
 
 - `--` for Lua/Vim-style files.
 - `#` for Python, shell, YAML, TOML, and similar files.
@@ -67,46 +77,46 @@ Each copied file receives one comment block. The comment syntax depends on the f
 Example:
 
 ```lua
--- ==========================================================
--- VIMQUEST TASK Q01-123456 [1/10] Fill
--- 补全表示 "来,前来" 的英文单词。
--- Answer:
 -- ____ here when you're ready.
--- Find this task, edit the Answer line, then run :VimQuestCheck.
--- END VIMQUEST TASK Q01-123456
--- ==========================================================
 ```
 
-The user edits only the line after `Answer:`.
+The user edits the same line into the full expected sentence:
 
-For edit-style tasks, the answer line is a full sentence that should be edited into the expected sentence. For meaning-style tasks, the answer line starts empty and should become the target English word.
+```lua
+-- Come here when you're ready.
+```
 
-## Round Submission
+The plugin does not currently write visible metadata next to the task. It keeps the task file path and line number in memory for this session.
 
-The user submits the whole round with:
+## Current Submission Flow
+
+The user submits the current task with:
 
 ```vim
 :VimQuestCheck
 ```
 
-The plugin scans every task block in the copied files and compares the edited answer line with the expected answer. Comparison currently ignores case and repeated whitespace.
+or:
 
-After checking, VimQuest shows a floating result window:
+```vim
+<leader>qc
+```
 
-- progress
-- correct count
-- wrong count
-- per-task expected answer
+The plugin checks only the current task line. Comparison currently ignores case and repeated whitespace.
 
-In an interactive Neovim UI, the plugin then asks whether to start the next round.
+If the answer is correct:
 
-If the user chooses the next round:
+- VimQuest marks the current task correct.
+- The current temporary buffer is marked unmodified to avoid save prompts.
+- VimQuest automatically jumps to the next task.
 
-1. The old temporary session directory is deleted.
-2. The original project cwd remains the source.
-3. A fresh batch of random files is copied.
-4. New tasks are inserted.
-5. Multiple task files are opened again.
+If the answer is wrong:
+
+- VimQuest shows a warning.
+- The cursor stays on the same task.
+- The user must edit the line and submit again.
+
+On the last task, a correct answer completes the round and shows the current stats.
 
 ## Stop And Restore
 
@@ -132,9 +142,9 @@ The real project is never written by VimQuest. All task edits happen under `~/.c
 | --- | --- |
 | `:VimQuestStart` | Start a new session and round. |
 | `:VimQuestStop` | Restore the original project and remove the temp copy. |
-| `:VimQuestNext` | Jump to the next known task file/block. |
-| `:VimQuestCheck` | Submit the round and show results. |
-| `:VimQuestHint` | Show the word hint for the task under the cursor. |
+| `:VimQuestNext` | Jump to the next task. |
+| `:VimQuestCheck` | Submit the current task. Correct answers auto-jump; wrong answers stay. |
+| `:VimQuestHint` | Show the requirement and hint for the task under the cursor. |
 | `:VimQuestStats` | Show current round progress. |
 
 ## Keymaps
@@ -144,12 +154,14 @@ The real project is never written by VimQuest. All task edits happen under `~/.c
 | `<leader>qs` | Start VimQuest. |
 | `<leader>qx` | Stop VimQuest. |
 | `<leader>qn` | Jump to next task. |
-| `<leader>qc` | Check all answers. |
+| `<leader>qc` | Submit current task. |
 | `<leader>qh` | Show hint. |
 | `<leader>qt` | Show stats. |
 | `K` | In a VimQuest session, show hint for the task under cursor; otherwise fall back to LSP hover. |
 
 ## Task Types
+
+All six task types are active. Tasks are distributed round-robin across types during a round.
 
 ### Fill
 
@@ -207,36 +219,34 @@ This is meant to encourage `dw`, `de`, `x`, and related deletion motions.
 
 Uses `core`.
 
-The task shows the Chinese core meaning. The user enters the English word.
+The task shows the Chinese core meaning as a comment. The user runs `:VimQuestCheck` and types the English word in the input prompt.
 
 ### Japanese Meaning
 
 Uses `ja`.
 
-The task shows the Japanese meaning. The user enters the English word.
+The task shows the Japanese meaning as a comment. The user runs `:VimQuestCheck` and types the English word in the input prompt.
 
 ### Example Translation
 
 Uses `exj`.
 
-The task shows the Japanese example translation. The user guesses the core English word.
+The task shows the Japanese example translation as a comment. The user runs `:VimQuestCheck` and guesses the core English word in the input prompt.
 
 ## Hint System
 
-When the cursor is inside a task block, `K` or `:VimQuestHint` opens a floating window.
+When the cursor is on a task line, `K` or `:VimQuestHint` opens a floating window.
 
-The hint includes:
+The current hint is intentionally short. It includes:
 
-- Word
+- task requirement
+- blank sentence
+- answer word
 - Chinese meaning
-- Japanese meaning
-- English definition
 - English example
-- Chinese example translation
-- Japanese example translation
 - Chinese core meaning
 
-The hint is task-aware: it tries to find the task block under the current cursor and shows the matching word entry.
+The hint is task-aware by file path and line number. If the cursor is not exactly on a task line, the plugin falls back to the current task index.
 
 ## Implementation Structure
 
@@ -284,7 +294,7 @@ The plugin keeps in-memory state for one active session:
 - `active`: whether VimQuest is running.
 - `original`: saved cwd/file/cursor.
 - `session_dir`: temp project copy path.
-- `tasks`: generated tasks and their file locations.
+- `tasks`: generated tasks, expected answers, file locations, and inserted line numbers.
 - `current`: current task index for `:VimQuestNext`.
 - `correct` / `wrong`: current round stats.
 - `checked`: per-task check result.
@@ -303,15 +313,16 @@ The implementation enforces this by:
 1. Scanning the source project only to choose files.
 2. Copying selected files into `~/.cache/vimquest/session-*`.
 3. Switching Neovim cwd to the copied session.
-4. Inserting task blocks only into copied files.
+4. Inserting task lines only into copied files.
 5. Restoring the original cwd/file/cursor on stop.
 6. Deleting the copied session directory on stop or next round.
 
 ## Current MVP Limits
 
 - The task insertion point is random and may land inside code blocks, strings, or syntax-sensitive regions. This is acceptable for MVP because files are temporary copies, but a later version can insert near safer boundaries.
-- The checker only reads the single line after `Answer:`.
-- `:VimQuestCheck` checks the whole round, not one task at a time.
+- The checker reads the inserted task line stored in memory.
+- `:VimQuestCheck` checks the current task only.
+- Task locations are memory-only. If the user inserts or deletes lines above a task, the stored line number may become stale in the current MVP.
 - Round state is memory-only and is lost if Neovim exits unexpectedly.
 - Opened files are currently shown as tab pages. This is simple and visible, but a future version could use buffers, quickfix, or a custom task list.
 
