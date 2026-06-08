@@ -105,6 +105,45 @@ local function wordlist_path()
   return join(vim.fn.stdpath("config"), config.wordlist)
 end
 
+local function available_dictionaries()
+  local sample_path = vim.api.nvim_get_runtime_file("lua/vimquest/data/ogden-850-words.json", false)
+  local data_dir
+  if sample_path[1] then
+    data_dir = sample_path[1]:match("^(.+)/[^/]+$")
+  else
+    data_dir = join(vim.fn.stdpath("config"), "lua", "vimquest", "data")
+  end
+  if not exists(data_dir) then
+    return {}
+  end
+  local dicts = {}
+  local handle = uv.fs_scandir(data_dir)
+  if not handle then
+    return {}
+  end
+  while true do
+    local name, typ = uv.fs_scandir_next(handle)
+    if not name then
+      break
+    end
+    if typ == "file" and name:match("%.json$") then
+      local label = name:gsub("%.json$", ""):gsub("^ogden%-850%-words%-?", "")
+      if label == "" then
+        label = "default"
+      end
+      table.insert(dicts, {
+        label = label,
+        file = name,
+        path = "lua/vimquest/data/" .. name,
+      })
+    end
+  end
+  table.sort(dicts, function(a, b)
+    return a.label < b.label
+  end)
+  return dicts
+end
+
 local function load_words()
   if state.words then
     return state.words
@@ -1058,6 +1097,32 @@ function M.stats()
   notify(string.format("Progress %d/%d\nCorrect %d\nWrong %d\nAccuracy %d%%", done, #state.tasks, state.correct, state.wrong, rate))
 end
 
+function M.select_dictionary()
+  local dicts = available_dictionaries()
+  if #dicts == 0 then
+    notify("No dictionaries found in data/ directory.", vim.log.levels.WARN)
+    return
+  end
+
+  local current_file = config.wordlist:match("([^/]+)$")
+
+  vim.ui.select(dicts, {
+    prompt = "Select VimQuest dictionary:",
+    format_item = function(item)
+      local marker = item.file == current_file and " ✓" or ""
+      return item.label .. marker
+    end,
+  }, function(choice)
+    if not choice then
+      return
+    end
+    config.wordlist = choice.path
+    state.words = nil
+    load_words()
+    notify(string.format("Dictionary changed to: %s (%d words)", choice.label, #state.words))
+  end)
+end
+
 local function truncate_display(text, width)
   text = tostring(text or ""):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
   if vim.fn.strdisplaywidth(text) <= width then
@@ -1441,6 +1506,7 @@ function M.setup(opts)
   vim.api.nvim_create_user_command("VimQuestHint", M.hint, { force = true })
   vim.api.nvim_create_user_command("VimQuestStats", M.stats, { force = true })
   vim.api.nvim_create_user_command("VimQuestWords", M.words, { force = true })
+  vim.api.nvim_create_user_command("VimQuestSelectDictionary", M.select_dictionary, { force = true })
 
   vim.keymap.set("n", "<leader>qs", M.start, { desc = "VimQuest start" })
   vim.keymap.set("n", "qn", M.next, { desc = "VimQuest next" })
@@ -1452,6 +1518,7 @@ function M.setup(opts)
   vim.keymap.set("n", "<leader>qc", M.check, { desc = "VimQuest check all" })
   vim.keymap.set("n", "<leader>qh", M.hint, { desc = "VimQuest hint" })
   vim.keymap.set("n", "<leader>qw", M.words, { desc = "VimQuest words drill" })
+  vim.keymap.set("n", "<leader>qd", M.select_dictionary, { desc = "VimQuest select dictionary" })
   vim.keymap.set("n", "<leader>qS", M.stats, { desc = "VimQuest stats" })
   vim.keymap.set("n", "K", function()
     if state.active then
