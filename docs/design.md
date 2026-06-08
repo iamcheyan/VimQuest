@@ -63,7 +63,8 @@ The user edits that line directly:
 
 The user can move between tasks with:
 
-- `<leader>qn` / `:VimQuestNext`
+- `qn` / `:VimQuestNext`
+- `qp` / `:VimQuestPrev`
 - `<leader>qt` / `:VimQuestTasks`
 - `:VimQuestList` and quickfix motions
 - `gF` on the path part of the `Prev: file:line` or `Next: file:line` reminders below a task
@@ -95,9 +96,9 @@ The user edits the same line into the full expected sentence:
 
 The plugin does not currently write visible metadata next to the task. It keeps the task file path and line number in memory for this session.
 
-## Current Submission Flow
+## Current Check Flow
 
-The user submits the current task with:
+The user checks the whole round with:
 
 ```vim
 :VimQuestCheck
@@ -109,21 +110,18 @@ or:
 <leader>qc
 ```
 
-The plugin checks only the current task line. Comparison currently ignores case and repeated whitespace.
+The plugin checks every task and opens a result report. Comparison currently ignores case and repeated whitespace.
 
-If the answer is correct:
+For code-editing tasks:
 
-- VimQuest marks the current task correct.
-- The current temporary buffer is marked unmodified to avoid save prompts.
-- VimQuest automatically jumps to the next task.
+- VimQuest reads the inserted answer line, falling back to the next non-metadata line.
+- Open temporary buffers are saved before checking, so edited answers are included.
 
-If the answer is wrong:
+For input tasks:
 
-- VimQuest shows a warning.
-- The cursor stays on the same task.
-- The user must edit the line and submit again.
+- VimQuest prompts for each answer during the check.
 
-On the last task, a correct answer completes the round and shows the current stats.
+After checking all tasks, VimQuest shows correct and wrong answers, then asks whether to start another round.
 
 ## Stop And Restore
 
@@ -151,26 +149,35 @@ The real project is never written by VimQuest. All task edits happen under `~/.c
 | `:VimQuestStop` | Restore the original project and remove the temp copy. |
 | `:VimQuestNext` | Jump to the next task. |
 | `:VimQuestPrev` | Jump to the previous task. |
+| `:VimQuestNextRound` | Start another round in the original project. |
+| `:VimQuestRestart` | Restart with a fresh set of tasks. |
 | `:VimQuestTasks` | Open a Telescope picker for fuzzy task search and jump. |
 | `:VimQuestList` | Populate the quickfix list with all task locations. |
-| `:VimQuestCheck` | Submit the current task. Correct answers auto-jump; wrong answers stay. |
+| `:VimQuestCheck` | Check the whole round and show the result report. |
 | `:VimQuestHint` | Show the requirement and hint for the task under the cursor. |
 | `:VimQuestStats` | Show current round progress. |
+| `:VimQuestWords` | Open the continuous word typing drill. |
 
 ## Keymaps
 
 | Key | Purpose |
 | --- | --- |
 | `<leader>qs` | Start VimQuest. |
-| `<leader>qx` | Stop VimQuest. |
-| `<leader>qn` | Jump to next task. |
-| `<leader>qp` | Jump to previous task. |
+| `qn` | Jump to next task. |
+| `qp` | Jump to previous task. |
+| `<leader>qr` | Restart with new tasks. |
+| `<leader>qN` | Start another round. |
 | `<leader>qt` | Search tasks with Telescope. |
 | `<leader>ql` | Open the quickfix task list. |
-| `<leader>qc` | Submit current task. |
+| `<leader>qc` | Check the whole round. |
 | `<leader>qh` | Show hint. |
+| `<leader>qw` | Open word typing drill. |
 | `<leader>qS` | Show stats. |
 | `K` | In a VimQuest session, show hint for the task under cursor; otherwise fall back to LSP hover. |
+
+## Word Drill
+
+`:VimQuestWords` opens a borderless narrow two-line popup at the bottom left. The first line is an input line with completion disabled. The second line shows English, Japanese, then Chinese. Pressing Enter verifies the input; correct input advances to another random word. Correctly entered words are stored in `stdpath("data")/vimquest/words_seen.json`; practiced words use the `Comment` highlight but still remain eligible for random practice. Typing `/exit` closes the popup. Right-drag inside the popup moves it, and the moved position is remembered for the current Neovim session.
 
 ## Task Types
 
@@ -232,19 +239,19 @@ This is meant to encourage `dw`, `de`, `x`, and related deletion motions.
 
 Uses `core`.
 
-The task shows the Chinese core meaning as a comment. The user runs `:VimQuestCheck` and types the English word in the input prompt.
+The task shows the Chinese core meaning as a comment. During `:VimQuestCheck`, the user types the English word in the input prompt.
 
 ### Japanese Meaning
 
 Uses `ja`.
 
-The task shows the Japanese meaning as a comment. The user runs `:VimQuestCheck` and types the English word in the input prompt.
+The task shows the Japanese meaning as a comment. During `:VimQuestCheck`, the user types the English word in the input prompt.
 
 ### Example Translation
 
 Uses `exj`.
 
-The task shows the Japanese example translation as a comment. The user runs `:VimQuestCheck` and guesses the core English word in the input prompt.
+The task shows the Japanese example translation as a comment. During `:VimQuestCheck`, the user guesses the core English word in the input prompt.
 
 ## Hint System
 
@@ -333,8 +340,7 @@ The implementation enforces this by:
 ## Current MVP Limits
 
 - The task insertion point is random and may land inside code blocks, strings, or syntax-sensitive regions. This is acceptable for MVP because files are temporary copies, but a later version can insert near safer boundaries.
-- The checker reads the inserted task line stored in memory.
-- `:VimQuestCheck` checks the current task only.
+- The checker reads inserted task lines stored in memory, and prompts for input-task answers during the full-round check.
 - Task locations are memory-only. If the user inserts or deletes lines above a task, the stored line number may become stale in the current MVP.
 - Round state is memory-only and is lost if Neovim exits unexpectedly.
 - Opened files are currently shown as tab pages. This is simple and visible, but a future version could use buffers, quickfix, or a custom task list.

@@ -11,7 +11,11 @@ local state = {
   correct = 0,
   wrong = 0,
   checked = {},
+  results = {},
   words = nil,
+  drill = nil,
+  drill_position = nil,
+  seen_words = nil,
 }
 
 local defaults = {
@@ -19,6 +23,10 @@ local defaults = {
   copy_file_count = 10,
   open_file_count = 5,
   wordlist = "lua/vimquest/data/ogden-850-words.json",
+  words_popup = {
+    row = nil,
+    col = 1,
+  },
   exclude_dirs = {
     [".git"] = true,
     ["node_modules"] = true,
@@ -263,18 +271,20 @@ local active_task_builders = {
   task_builders.example_translation,
 }
 
-local function build_tasks()
+local function build_tasks(excluded_words)
   local words = shuffle(vim.deepcopy(load_words()))
   local tasks = {}
   local builder_index = 1
   for _, entry in ipairs(words) do
-    local task = active_task_builders[builder_index](entry)
-    builder_index = builder_index % #active_task_builders + 1
-    if task then
-      table.insert(tasks, task)
-    end
-    if #tasks >= config.task_count then
-      break
+    if not (excluded_words and excluded_words[entry.w]) then
+      local task = active_task_builders[builder_index](entry)
+      builder_index = builder_index % #active_task_builders + 1
+      if task then
+        table.insert(tasks, task)
+      end
+      if #tasks >= config.task_count then
+        break
+      end
     end
   end
   return tasks
@@ -553,7 +563,7 @@ local function cleanup_old_sessions()
   end
 end
 
-local function start_session(cwd, original)
+local function start_session(cwd, original, excluded_words)
   local session_dir = join(
     vim.fn.expand("~/.cache"),
     "vimquest",
@@ -567,7 +577,7 @@ local function start_session(cwd, original)
     if #copied == 0 then
       error("no supported code files found in project")
     end
-    local tasks = build_tasks()
+    local tasks = build_tasks(excluded_words)
     if #tasks == 0 then
       error("no tasks generated from wordlist")
     end
@@ -580,6 +590,7 @@ local function start_session(cwd, original)
     state.correct = 0
     state.wrong = 0
     state.checked = {}
+    state.results = {}
   end)
 
   if not ok then
@@ -594,11 +605,21 @@ local function start_session(cwd, original)
   open_task(1)
   notify(
     string.format(
-      "Round started: %d tasks inserted. %d files opened. Use <leader>qn to navigate.",
+      "Round started: %d tasks inserted. %d files opened. Use qn to navigate.",
       #state.tasks,
       math.min(#state.tasks, math.max(5, config.open_file_count))
     )
   )
+end
+
+local function task_answer_set(tasks)
+  local answers = {}
+  for _, task in ipairs(tasks or {}) do
+    if task.answer then
+      answers[task.answer] = true
+    end
+  end
+  return answers
 end
 
 function M.start()
@@ -629,6 +650,7 @@ function M.stop()
   state.tasks = {}
   state.current = 0
   state.checked = {}
+  state.results = {}
 
   if original and original.cwd then
     vim.cmd.tcd(vim.fn.fnameescape(original.cwd))
@@ -744,6 +766,7 @@ function M.next_round()
 
   local original = state.original
   local old_session_dir = state.session_dir
+  local excluded_words = task_answer_set(state.tasks)
   state.active = false
   state.session_dir = nil
   state.tasks = {}
@@ -751,34 +774,45 @@ function M.next_round()
   state.correct = 0
   state.wrong = 0
   state.checked = {}
+  state.results = {}
 
   if old_session_dir then
+    wipe_temp_buffers(old_session_dir)
     vim.fn.delete(old_session_dir, "rf")
   end
-  start_session(original.cwd, original)
+  start_session(original.cwd, original, excluded_words)
 end
 
-local function show_check_report(results)
+local function show_round_report()
+  local done = state.correct + state.wrong
+  local accuracy = #state.tasks > 0 and math.floor((state.correct / #state.tasks) * 100 + 0.5) or 0
   local lines = {
     "VimQuest Round Result",
     "",
-    string.format("Progress %d/%d", state.correct + state.wrong, #state.tasks),
+    string.format("Progress %d/%d", done, #state.tasks),
     string.format("Correct %d", state.correct),
     string.format("Wrong %d", state.wrong),
+    string.format("Accuracy %d%%", accuracy),
     "",
     "Answers:",
   }
-  for _, result in ipairs(results) do
+  for index, task in ipairs(state.tasks) do
+    local correct = state.checked[index] == true
+    local result = state.results[index] or {}
+    local actual = result.actual or ""
     table.insert(
       lines,
       string.format(
-        "%s [%s] %s -> %s",
-        result.correct and "OK" or "NO",
-        result.task.type,
-        result.task.file,
-        result.task.expected
+        "%02d. %s [%s] %s:%d",
+        index,
+        correct and "OK" or "NO",
+        task.type,
+        task.file,
+        task.answer_line
       )
     )
+    table.insert(lines, string.format("    Your answer: %s", actual ~= "" and actual or "(empty)"))
+    table.insert(lines, string.format("    Expected: %s", task.expected or ""))
   end
 
   local width = math.min(92, math.max(50, vim.o.columns - 8))
@@ -800,6 +834,24 @@ local function show_check_report(results)
   vim.keymap.set("n", "<Esc>", "<cmd>close<cr>", { buffer = buf, nowait = true, silent = true })
   vim.keymap.set("n", "q", "<cmd>close<cr>", { buffer = buf, nowait = true, silent = true })
   return win
+end
+
+local function prompt_next_round(report_win)
+  vim.ui.select({ "Yes", "No" }, { prompt = "Start a new VimQuest round?" }, function(choice)
+    if report_win and vim.api.nvim_win_is_valid(report_win) then
+      pcall(vim.api.nvim_win_close, report_win, true)
+    end
+    if choice == "Yes" then
+      M.next_round()
+    else
+      notify("Round complete. Run :VimQuestNextRound or :VimQuestStop when ready.")
+    end
+  end)
+end
+
+local function complete_round()
+  local report_win = show_round_report()
+  prompt_next_round(report_win)
 end
 
 local function check_replace(task, actual)
@@ -828,23 +880,10 @@ local function check_replace(task, actual)
 end
 
 
-function M.check()
-  if not ensure_active() then
-    return
-  end
-
-  local task = task_at_cursor()
-  local index = task_index(task)
-  state.current = index
-
+local function check_task(task)
   local actual, correct
   if is_input_task(task) then
-    local input = vim.fn.input(task.type .. " > ")
-    if input == "" then
-      notify("Cancelled.", vim.log.levels.INFO)
-      return
-    end
-    actual = input
+    actual = vim.fn.input(string.format("%s [%s] > ", task.type, task.prompt or task.expected or ""))
     correct = normalize(actual) == normalize(task.expected)
   elseif task.type == "Replace" then
     actual = answer_for_task(task)
@@ -861,25 +900,88 @@ function M.check()
       correct = actual ~= nil and normalize(actual) == normalize(task.expected)
     end
   end
-  state.checked[index] = correct
+  return actual, correct == true
+end
+
+local function save_session_buffers()
+  if not state.session_dir then
+    return
+  end
+  local prefix = state.session_dir:gsub("/$", "") .. "/"
+  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+    local name = vim.api.nvim_buf_get_name(bufnr)
+    if name:sub(1, #prefix) == prefix and vim.api.nvim_buf_is_loaded(bufnr) then
+      pcall(vim.api.nvim_buf_call, bufnr, function()
+        vim.cmd.silent("write")
+      end)
+    end
+  end
+end
+
+function M.check()
+  if not ensure_active() then
+    return
+  end
+
+  save_session_buffers()
+
+  for index, task in ipairs(state.tasks) do
+    local actual, correct = check_task(task)
+    state.checked[index] = correct
+    state.results[index] = {
+      actual = actual,
+      correct = correct,
+    }
+  end
+  state.current = #state.tasks
   recompute_stats()
+
+  notify(
+    string.format(
+      "Round checked. Correct %d | Wrong %d | Accuracy %d%%",
+      state.correct,
+      state.wrong,
+      math.floor((state.correct / #state.tasks) * 100 + 0.5)
+    )
+  )
+  complete_round()
+end
+
+function M.check_current()
+  if not ensure_active() then
+    return
+  end
+
+  local task = task_at_cursor()
+  local index = task_index(task)
+  state.current = index
+  local actual, correct = check_task(task)
+  state.checked[index] = correct
+  state.results[index] = {
+    actual = actual,
+    correct = correct,
+  }
+  recompute_stats()
+  local done = state.correct + state.wrong
 
   if correct then
     pcall(vim.api.nvim_set_option_value, "modified", false, { buf = vim.api.nvim_get_current_buf() })
-    if index < #state.tasks then
-      notify(string.format("Correct. Moving to %d/%d.", index + 1, #state.tasks))
-      state.current = index
-      M.next()
-    else
-      notify(
-        string.format(
-          "Correct. Round complete. Correct %d | Wrong %d | Accuracy %d%%",
-          state.correct,
-          state.wrong,
-          math.floor((state.correct / #state.tasks) * 100 + 0.5)
-        )
+  end
+
+  if done >= #state.tasks then
+    notify(
+      string.format(
+        "Round complete. Correct %d | Wrong %d | Accuracy %d%%",
+        state.correct,
+        state.wrong,
+        math.floor((state.correct / #state.tasks) * 100 + 0.5)
       )
-    end
+    )
+    complete_round()
+  elseif correct then
+    notify(string.format("Correct. Moving to %d/%d.", index % #state.tasks + 1, #state.tasks))
+    state.current = index
+    M.next()
   else
     notify("Wrong. Stay here and try again.", vim.log.levels.WARN)
   end
@@ -956,6 +1058,350 @@ function M.stats()
   notify(string.format("Progress %d/%d\nCorrect %d\nWrong %d\nAccuracy %d%%", done, #state.tasks, state.correct, state.wrong, rate))
 end
 
+local function truncate_display(text, width)
+  text = tostring(text or ""):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+  if vim.fn.strdisplaywidth(text) <= width then
+    return text
+  end
+
+  local out = {}
+  local used = 0
+  local limit = math.max(1, width - 1)
+  for _, char in utf8.codes(text) do
+    local piece = utf8.char(char)
+    local char_width = vim.fn.strdisplaywidth(piece)
+    if used + char_width > limit then
+      break
+    end
+    table.insert(out, piece)
+    used = used + char_width
+  end
+  return table.concat(out) .. "…"
+end
+
+local function drill_entry_line(entry, width)
+  local text = table.concat({
+    entry.w or "",
+    entry.ja or "",
+    entry.zh or entry.core or "",
+  }, " ")
+  return truncate_display(text, width)
+end
+
+local function user_data_dir()
+  return join(vim.fn.stdpath("data"), "vimquest")
+end
+
+local function seen_words_path()
+  return join(user_data_dir(), "words_seen.json")
+end
+
+local function load_seen_words()
+  if state.seen_words then
+    return state.seen_words
+  end
+
+  local path = seen_words_path()
+  state.seen_words = {}
+  if not exists(path) then
+    return state.seen_words
+  end
+
+  local ok, decoded = pcall(read_json, path)
+  if not ok or type(decoded) ~= "table" then
+    notify("Could not read VimQuest word history. Starting with empty history.", vim.log.levels.WARN)
+    return state.seen_words
+  end
+
+  for word, seen in pairs(decoded) do
+    if type(word) == "string" and seen then
+      state.seen_words[word] = true
+    end
+  end
+  return state.seen_words
+end
+
+local function save_seen_words()
+  local seen_words = load_seen_words()
+  vim.fn.mkdir(user_data_dir(), "p")
+  vim.fn.writefile({ vim.json.encode(seen_words) }, seen_words_path())
+end
+
+local function word_seen(word)
+  return load_seen_words()[word] == true
+end
+
+local function mark_word_seen(word)
+  if not word or word == "" then
+    return
+  end
+  local seen_words = load_seen_words()
+  if seen_words[word] then
+    return
+  end
+  seen_words[word] = true
+  save_seen_words()
+end
+
+local function drill_pick_word()
+  local words = load_words()
+  if #words == 0 then
+    return nil
+  end
+  local entry = words[math.random(#words)]
+  if state.drill and state.drill.word and #words > 1 then
+    for _ = 1, 8 do
+      if entry.w ~= state.drill.word then
+        break
+      end
+      entry = words[math.random(#words)]
+    end
+  end
+  return entry
+end
+
+local function drill_close()
+  local drill = state.drill
+  state.drill = nil
+  if not drill then
+    return
+  end
+  if drill.win and vim.api.nvim_win_is_valid(drill.win) then
+    pcall(vim.api.nvim_win_close, drill.win, true)
+  end
+  if drill.buf and vim.api.nvim_buf_is_valid(drill.buf) then
+    pcall(vim.api.nvim_buf_delete, drill.buf, { force = true })
+  end
+end
+
+local function drill_render(entry)
+  local drill = state.drill
+  if not drill or not vim.api.nvim_buf_is_valid(drill.buf) then
+    return
+  end
+  drill.entry = entry
+  drill.word = entry and entry.w or nil
+  vim.api.nvim_buf_set_lines(drill.buf, 0, -1, false, {
+    "",
+    entry and drill_entry_line(entry, drill.width) or "No words",
+  })
+  vim.api.nvim_buf_clear_namespace(drill.buf, drill.ns, 0, -1)
+  if entry and word_seen(entry.w) then
+    vim.api.nvim_buf_set_extmark(drill.buf, drill.ns, 1, 0, {
+      end_line = 2,
+      hl_group = "Comment",
+      hl_eol = true,
+    })
+  end
+  if drill.win and vim.api.nvim_win_is_valid(drill.win) then
+    vim.api.nvim_set_current_win(drill.win)
+    vim.api.nvim_win_set_cursor(drill.win, { 1, 0 })
+    vim.cmd.startinsert()
+  end
+end
+
+local function drill_next()
+  local entry = drill_pick_word()
+  if not entry then
+    notify("Word list is empty.", vim.log.levels.WARN)
+    drill_close()
+    return
+  end
+  drill_render(entry)
+end
+
+local function drill_submit()
+  local drill = state.drill
+  if not drill or not vim.api.nvim_buf_is_valid(drill.buf) then
+    return
+  end
+  local input = vim.api.nvim_buf_get_lines(drill.buf, 0, 1, false)[1] or ""
+  input = input:gsub("^%s+", ""):gsub("%s+$", "")
+  if input == "/exit" then
+    drill_close()
+    return
+  end
+  if normalize(input) ~= normalize(drill.word) then
+    vim.api.nvim_buf_set_lines(drill.buf, 0, 1, false, { "" })
+    if drill.win and vim.api.nvim_win_is_valid(drill.win) then
+      vim.api.nvim_win_set_cursor(drill.win, { 1, 0 })
+      vim.cmd.startinsert()
+    end
+    notify("Wrong. Type the word shown below.", vim.log.levels.WARN)
+    return
+  end
+  mark_word_seen(drill.word)
+  drill_next()
+end
+
+local function clamp(value, min_value, max_value)
+  return math.max(min_value, math.min(max_value, value))
+end
+
+local function drill_default_position(width, height)
+  local row = config.words_popup.row
+  if row == nil then
+    row = vim.o.lines - height - 3
+  elseif row < 0 then
+    row = vim.o.lines + row
+  end
+
+  local col = config.words_popup.col or 1
+  if col < 0 then
+    col = vim.o.columns + col
+  end
+
+  return {
+    row = clamp(row, 0, math.max(0, vim.o.lines - height - 1)),
+    col = clamp(col, 0, math.max(0, vim.o.columns - width)),
+  }
+end
+
+local function drill_position(width, height)
+  local position = state.drill_position or drill_default_position(width, height)
+  return {
+    row = clamp(position.row or 0, 0, math.max(0, vim.o.lines - height - 1)),
+    col = clamp(position.col or 0, 0, math.max(0, vim.o.columns - width)),
+  }
+end
+
+local function drill_set_position(row, col)
+  local drill = state.drill
+  if not drill or not drill.win or not vim.api.nvim_win_is_valid(drill.win) then
+    return
+  end
+  local position = {
+    row = clamp(row, 0, math.max(0, vim.o.lines - drill.height - 1)),
+    col = clamp(col, 0, math.max(0, vim.o.columns - drill.width)),
+  }
+  state.drill_position = position
+  vim.api.nvim_win_set_config(drill.win, {
+    relative = "editor",
+    row = position.row,
+    col = position.col,
+    width = drill.width,
+    height = drill.height,
+    style = "minimal",
+  })
+end
+
+local function drill_start_drag()
+  local drill = state.drill
+  if not drill then
+    return
+  end
+  local mouse = vim.fn.getmousepos()
+  local position = drill_position(drill.width, drill.height)
+  drill.drag = {
+    mouse_row = mouse.screenrow,
+    mouse_col = mouse.screencol,
+    row = position.row,
+    col = position.col,
+  }
+end
+
+local function drill_drag()
+  local drill = state.drill
+  if not drill or not drill.drag then
+    return
+  end
+  local mouse = vim.fn.getmousepos()
+  drill_set_position(
+    drill.drag.row + mouse.screenrow - drill.drag.mouse_row,
+    drill.drag.col + mouse.screencol - drill.drag.mouse_col
+  )
+end
+
+local function drill_stop_drag()
+  local drill = state.drill
+  if drill then
+    drill.drag = nil
+  end
+end
+
+function M.words()
+  if state.drill then
+    drill_close()
+  end
+
+  local width = math.min(44, math.max(28, vim.o.columns - 4))
+  local height = 3
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[buf].buftype = "nofile"
+  vim.bo[buf].bufhidden = "wipe"
+  vim.bo[buf].swapfile = false
+  vim.bo[buf].filetype = "vimquest-words"
+  vim.bo[buf].complete = ""
+  vim.bo[buf].omnifunc = ""
+  vim.bo[buf].completefunc = ""
+  vim.bo[buf].keywordprg = ""
+  vim.b[buf].completion = false
+  local position = drill_position(width, height)
+
+  local win = vim.api.nvim_open_win(buf, true, {
+    relative = "editor",
+    row = position.row,
+    col = position.col,
+    width = width,
+    height = height,
+    style = "minimal",
+  })
+  vim.wo[win].winhl = "Normal:Normal,EndOfBuffer:Normal"
+  vim.wo[win].spell = false
+  vim.wo[win].wrap = false
+  vim.wo[win].foldenable = false
+
+  state.drill = {
+    buf = buf,
+    win = win,
+    width = width,
+    height = height,
+    ns = vim.api.nvim_create_namespace("vimquest_words"),
+  }
+
+  vim.keymap.set("i", "<CR>", drill_submit, { buffer = buf, nowait = true, silent = true })
+  vim.keymap.set("n", "<CR>", drill_submit, { buffer = buf, nowait = true, silent = true })
+  vim.keymap.set("n", "q", drill_close, { buffer = buf, nowait = true, silent = true })
+  vim.keymap.set({ "n", "i" }, "<RightMouse>", drill_start_drag, { buffer = buf, nowait = true, silent = true })
+  vim.keymap.set({ "n", "i" }, "<RightDrag>", drill_drag, { buffer = buf, nowait = true, silent = true })
+  vim.keymap.set({ "n", "i" }, "<RightRelease>", drill_stop_drag, { buffer = buf, nowait = true, silent = true })
+
+  local cmp_ok, cmp = pcall(require, "cmp")
+  if cmp_ok and cmp.setup and cmp.setup.buffer then
+    pcall(cmp.setup.buffer, { enabled = false })
+    pcall(cmp.close)
+  end
+  local blink_ok, blink = pcall(require, "blink.cmp")
+  if blink_ok and blink.hide then
+    pcall(blink.hide)
+  end
+
+  vim.api.nvim_create_autocmd({ "InsertEnter", "TextChangedI" }, {
+    buffer = buf,
+    callback = function()
+      vim.b[buf].completion = false
+      local ok_cmp, local_cmp = pcall(require, "cmp")
+      if ok_cmp and local_cmp.close then
+        pcall(local_cmp.close)
+      end
+      local ok_blink, local_blink = pcall(require, "blink.cmp")
+      if ok_blink and local_blink.hide then
+        pcall(local_blink.hide)
+      end
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    buffer = buf,
+    once = true,
+    callback = function()
+      state.drill = nil
+    end,
+  })
+
+  drill_next()
+end
+
 function M.setup(opts)
   config = vim.tbl_deep_extend("force", config, opts or {})
 
@@ -987,20 +1433,25 @@ function M.setup(opts)
   vim.api.nvim_create_user_command("VimQuestStop", M.stop, { force = true })
   vim.api.nvim_create_user_command("VimQuestNext", M.next, { force = true })
   vim.api.nvim_create_user_command("VimQuestPrev", M.prev, { force = true })
+  vim.api.nvim_create_user_command("VimQuestNextRound", M.next_round, { force = true })
+  vim.api.nvim_create_user_command("VimQuestRestart", M.next_round, { force = true })
   vim.api.nvim_create_user_command("VimQuestTasks", M.tasks, { force = true })
   vim.api.nvim_create_user_command("VimQuestList", M.list, { force = true })
   vim.api.nvim_create_user_command("VimQuestCheck", M.check, { force = true })
   vim.api.nvim_create_user_command("VimQuestHint", M.hint, { force = true })
   vim.api.nvim_create_user_command("VimQuestStats", M.stats, { force = true })
+  vim.api.nvim_create_user_command("VimQuestWords", M.words, { force = true })
 
   vim.keymap.set("n", "<leader>qs", M.start, { desc = "VimQuest start" })
-  vim.keymap.set("n", "<leader>qx", M.stop, { desc = "VimQuest stop" })
-  vim.keymap.set("n", "<leader>qn", M.next, { desc = "VimQuest next" })
-  vim.keymap.set("n", "<leader>qp", M.prev, { desc = "VimQuest prev" })
+  vim.keymap.set("n", "qn", M.next, { desc = "VimQuest next" })
+  vim.keymap.set("n", "qp", M.prev, { desc = "VimQuest prev" })
+  vim.keymap.set("n", "<leader>qr", M.next_round, { desc = "VimQuest restart with new tasks" })
+  vim.keymap.set("n", "<leader>qN", M.next_round, { desc = "VimQuest next round" })
   vim.keymap.set("n", "<leader>qt", M.tasks, { desc = "VimQuest tasks" })
   vim.keymap.set("n", "<leader>ql", M.list, { desc = "VimQuest quickfix list" })
-  vim.keymap.set("n", "<leader>qc", M.check, { desc = "VimQuest check" })
+  vim.keymap.set("n", "<leader>qc", M.check, { desc = "VimQuest check all" })
   vim.keymap.set("n", "<leader>qh", M.hint, { desc = "VimQuest hint" })
+  vim.keymap.set("n", "<leader>qw", M.words, { desc = "VimQuest words drill" })
   vim.keymap.set("n", "<leader>qS", M.stats, { desc = "VimQuest stats" })
   vim.keymap.set("n", "K", function()
     if state.active then

@@ -47,26 +47,35 @@ A Neovim plugin that turns your codebase into an English vocabulary quiz. VimQue
 | `:VimQuestStop` | Stop and restore the original project |
 | `:VimQuestNext` | Jump to the next task |
 | `:VimQuestPrev` | Jump to the previous task |
+| `:VimQuestNextRound` | Start another round in the original project |
+| `:VimQuestRestart` | Restart with a fresh set of tasks |
 | `:VimQuestTasks` | Search and jump to any task with Telescope |
 | `:VimQuestList` | Put all tasks in the quickfix list |
-| `:VimQuestCheck` | Check all answers and show results |
+| `:VimQuestCheck` | Check the whole round and show the result report |
 | `:VimQuestHint` | Show hint for the task at cursor |
 | `:VimQuestStats` | Show current round statistics |
+| `:VimQuestWords` | Open the continuous word typing drill |
 
 ### Keymaps (default)
 
 | Key | Action |
 |-----|--------|
 | `<leader>qs` | Start |
-| `<leader>qx` | Stop |
-| `<leader>qn` | Next task |
-| `<leader>qp` | Previous task |
+| `qn` | Next task |
+| `qp` | Previous task |
+| `<leader>qr` | Restart with new tasks |
+| `<leader>qN` | Next round |
 | `<leader>qt` | Search tasks |
 | `<leader>ql` | Quickfix task list |
-| `<leader>qc` | Check answers |
+| `<leader>qc` | Check all answers |
 | `<leader>qh` | Show hint |
+| `<leader>qw` | Word typing drill |
 | `<leader>qS` | Show stats |
 | `K` | Show hint (when in active session) or LSP hover |
+
+### Word Drill
+
+`:VimQuestWords` opens a borderless two-line popup at the bottom left. Completion is disabled in that input buffer. Right-drag inside the popup to move it; the position is remembered for the current Neovim session. Type the shown word on the first line and press Enter to verify it. The second line shows English, Japanese, then Chinese. Correctly entered words are recorded under `stdpath("data")/vimquest/words_seen.json`; practiced words are shown with the `Comment` highlight but remain in the random pool. Type `/exit` to close it.
 
 ## Configuration
 
@@ -75,6 +84,10 @@ require("vimquest").setup({
   task_count = 10,          -- number of tasks per round
   copy_file_count = 10,     -- number of files to copy
   wordlist = "lua/vimquest/data/ogden-850-words.json",
+  words_popup = {
+    row = nil,              -- nil means bottom; negative values count from bottom
+    col = 1,                -- negative values count from right
+  },
   exclude_dirs = {          -- directories to skip
     [".git"] = true,
     ["node_modules"] = true,
