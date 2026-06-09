@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+**/.DS_Store
+
+# VimQuest temp sessions
+~/.cache/vimquest/
+
+# Reference site (source material, not part of plugin)
+site/
+
+# Neovim swap/backup
+*.swp
+*.swo
+*~
+.netrwhist
+tags
+
+# User data (per-machine word history)
+words_seen.json

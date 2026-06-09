@@ -224,77 +224,92 @@ local function blank_word_once(text, word)
     :gsub("(%f[%a])" .. vim.pesc(word) .. "(%f[%A])", "____", 1)
 end
 
+-- local task_builders = {
+--   fill = function(entry)
+--     local expected = blank_word_once(sentence_with_word(entry), entry.w)
+--     return {
+--       type = "Fill",
+--       prompt = string.format('补全表示 "%s" 的英文单词。', entry.zh or ""),
+--       editable = expected,
+--       expected = sentence_with_word(entry),
+--       answer = entry.w,
+--       entry = entry,
+--     }
+--   end,
+--   replace = function(entry)
+--     local synonyms = entry.s or {}
+--     if #synonyms == 0 then
+--       return nil
+--     end
+--     local synonym = synonyms[math.random(#synonyms)]
+--     local ex = sentence_with_word(entry):gsub("^%u", string.lower)
+--     return {
+--       type = "Replace",
+--       prompt = "把近义词替换成核心词。",
+--       editable = replace_word_once(ex, entry.w, "{{" .. synonym .. "}}"),
+--       expected = ex,
+--       answer = entry.w,
+--       entry = entry,
+--     }
+--   end,
+--   delete = function(entry)
+--     local ex = sentence_with_word(entry)
+--     local word = ex:match("^(%a+)")
+--     local editable = word and ex:gsub("^" .. vim.pesc(word), word .. " " .. word:gsub("^%u", string.lower), 1)
+--       or (entry.w .. " " .. ex)
+--     return {
+--       type = "Delete",
+--       prompt = "删除多余单词。",
+--       editable = editable,
+--       expected = ex,
+--       answer = entry.w,
+--       entry = entry,
+--     }
+--   end,
+--   meaning = function(entry)
+--     return {
+--       type = "Meaning",
+--       prompt = "根据中文核心概念输入对应英文。",
+--       display = entry.core or entry.zh or "",
+--       editable = "",
+--       expected = entry.w,
+--       answer = entry.w,
+--       entry = entry,
+--     }
+--   end,
+--   japanese_meaning = function(entry)
+--     return {
+--       type = "Japanese Meaning",
+--       prompt = "根据日语释义输入英文。",
+--       display = entry.ja or "",
+--       editable = "",
+--       expected = entry.w,
+--       answer = entry.w,
+--       entry = entry,
+--     }
+--   end,
+--   example_translation = function(entry)
+--     return {
+--       type = "Example Translation",
+--       prompt = "根据日语例句翻译猜测核心单词。",
+--       display = entry.exj or "",
+--       editable = "",
+--       expected = entry.w,
+--       answer = entry.w,
+--       entry = entry,
+--     }
+--   end,
+-- }
+
 local task_builders = {
-  fill = function(entry)
-    local expected = blank_word_once(sentence_with_word(entry), entry.w)
-    return {
-      type = "Fill",
-      prompt = string.format('补全表示 "%s" 的英文单词。', entry.zh or ""),
-      editable = expected,
-      expected = sentence_with_word(entry),
-      answer = entry.w,
-      entry = entry,
-    }
-  end,
-  replace = function(entry)
-    local synonyms = entry.s or {}
-    if #synonyms == 0 then
-      return nil
-    end
-    local synonym = synonyms[math.random(#synonyms)]
-    local ex = sentence_with_word(entry):gsub("^%u", string.lower)
-    return {
-      type = "Replace",
-      prompt = "把近义词替换成核心词。",
-      editable = replace_word_once(ex, entry.w, "{{" .. synonym .. "}}"),
-      expected = ex,
-      answer = entry.w,
-      entry = entry,
-    }
-  end,
-  delete = function(entry)
+  copy = function(entry)
     local ex = sentence_with_word(entry)
-    local word = ex:match("^(%a+)")
-    local editable = word and ex:gsub("^" .. vim.pesc(word), word .. " " .. word:gsub("^%u", string.lower), 1)
-      or (entry.w .. " " .. ex)
     return {
-      type = "Delete",
-      prompt = "删除多余单词。",
-      editable = editable,
+      type = "Copy",
+      prompt = "照抄下方英文句子。",
+      display = ex,
+      editable = "",
       expected = ex,
-      answer = entry.w,
-      entry = entry,
-    }
-  end,
-  meaning = function(entry)
-    return {
-      type = "Meaning",
-      prompt = "根据中文核心概念输入对应英文。",
-      display = entry.core or entry.zh or "",
-      editable = "",
-      expected = entry.w,
-      answer = entry.w,
-      entry = entry,
-    }
-  end,
-  japanese_meaning = function(entry)
-    return {
-      type = "Japanese Meaning",
-      prompt = "根据日语释义输入英文。",
-      display = entry.ja or "",
-      editable = "",
-      expected = entry.w,
-      answer = entry.w,
-      entry = entry,
-    }
-  end,
-  example_translation = function(entry)
-    return {
-      type = "Example Translation",
-      prompt = "根据日语例句翻译猜测核心单词。",
-      display = entry.exj or "",
-      editable = "",
-      expected = entry.w,
       answer = entry.w,
       entry = entry,
     }
@@ -302,12 +317,7 @@ local task_builders = {
 }
 
 local active_task_builders = {
-  task_builders.fill,
-  task_builders.replace,
-  task_builders.delete,
-  task_builders.meaning,
-  task_builders.japanese_meaning,
-  task_builders.example_translation,
+  task_builders.copy,
 }
 
 local function build_tasks(excluded_words)
@@ -384,7 +394,12 @@ end
 local function task_block(task, index, total)
   local rel = task.file
   local lines
-  if is_input_task(task) then
+  if task.type == "Copy" then
+    lines = {
+      comment_line(rel, "Prev: pending"),
+      comment_line(rel, task.display or ""),
+    }
+  elseif is_input_task(task) then
     lines = {
       comment_line(rel, "Prev: pending"),
       comment_line(rel, "[Guess] " .. (task.display or task.editable)),
@@ -475,6 +490,10 @@ end
 
 local function normalize(text)
   return (text or ""):gsub("^%s+", ""):gsub("%s+$", ""):gsub("%s+", " "):lower()
+end
+
+local function normalize_letters(text)
+  return (text or ""):gsub("[^%a%s]", ""):gsub("^%s+", ""):gsub("%s+$", ""):gsub("%s+", " "):lower()
 end
 
 local function buffer_lines_for(path)
@@ -705,9 +724,70 @@ function M.stop()
   notify("VimQuest session stopped. Original project restored.")
 end
 
+local function expand_tasks()
+  local session_dir = state.session_dir
+  local excluded = {}
+  for _, task in ipairs(state.tasks) do
+    if task.answer then
+      excluded[task.answer] = true
+    end
+  end
+  local new_tasks = build_tasks(excluded)
+  if #new_tasks == 0 then
+    return 0
+  end
+
+  local project_root = state.original and state.original.cwd or vim.fn.getcwd()
+  local existing_files = {}
+  for _, task in ipairs(state.tasks) do
+    existing_files[task.file] = true
+  end
+  local all_scanned = scan_project(project_root)
+  local fresh_files = {}
+  for _, f in ipairs(all_scanned) do
+    if not existing_files[f] then
+      table.insert(fresh_files, f)
+    end
+  end
+
+  local usable = math.min(#fresh_files, #new_tasks)
+  if usable == 0 then
+    return 0
+  end
+
+  local copied = copy_files(project_root, session_dir, fresh_files)
+  insert_tasks_into_files(session_dir, copied, new_tasks)
+
+  for _, task in ipairs(new_tasks) do
+    table.insert(state.tasks, task)
+  end
+
+  local old_last = state.tasks[#state.tasks - #new_tasks]
+  local new_first = new_tasks[1]
+  if old_last and new_first then
+    local path = join(session_dir, old_last.file)
+    local lines = vim.fn.readfile(path)
+    lines[old_last.answer_line + 1] = comment_line(old_last.file, task_jump_text(new_first, "Next"))
+    vim.fn.writefile(lines, path)
+
+    local path2 = join(session_dir, new_first.file)
+    local lines2 = vim.fn.readfile(path2)
+    lines2[new_first.answer_line - 1] = comment_line(new_first.file, task_jump_text(old_last, "Prev"))
+    vim.fn.writefile(lines2, path2)
+  end
+
+  return #new_tasks
+end
+
 function M.next()
   if not ensure_active() then
     return
+  end
+  if state.current >= #state.tasks then
+    local added = expand_tasks()
+    if added > 0 then
+      notify(string.format("Extended: +%d tasks (total %d)", added, #state.tasks))
+    end
   end
   state.current = state.current % #state.tasks + 1
   open_task(state.current)
@@ -1008,15 +1088,14 @@ function M.check_current()
   end
 
   if done >= #state.tasks then
-    notify(
-      string.format(
-        "Round complete. Correct %d | Wrong %d | Accuracy %d%%",
-        state.correct,
-        state.wrong,
-        math.floor((state.correct / #state.tasks) * 100 + 0.5)
-      )
-    )
-    complete_round()
+    local added = expand_tasks()
+    if added > 0 then
+      notify(string.format("Correct %d | Wrong %d | +%d tasks (total %d)", state.correct, state.wrong, added, #state.tasks))
+    else
+      notify(string.format("Correct %d | Wrong %d | No more words available.", state.correct, state.wrong))
+    end
+    state.current = index
+    M.next()
   elseif correct then
     notify(string.format("Correct. Moving to %d/%d.", index % #state.tasks + 1, #state.tasks))
     state.current = index
@@ -1037,34 +1116,51 @@ function M.hint()
   end
   local entry = task.entry
   local use_ja = math.random() > 0.5
-  local synonyms = entry.s and table.concat(entry.s, ", ") or ""
-  local lines = {
-    "**" .. (entry.w or "") .. "**",
-    "",
-    "Definition: " .. (entry.en or ""),
-    "",
-    "Example: " .. (entry.ex or ""),
-    "",
-    "Synonyms: " .. synonyms,
-  }
-  if use_ja then
-    vim.list_extend(lines, {
+  local lines
+  if task.type == "Copy" then
+    lines = {
+      task.display or "",
+      "",
+      "UK " .. (entry.ipa_uk or "") .. "  US " .. (entry.ipa_us or ""),
       "",
       "Japanese: " .. (entry.ja or ""),
       "",
-      "Example (ja): " .. (entry.exj or ""),
-      "",
-      "Core (ja): " .. (entry.core_ja or ""),
-    })
-  else
-    vim.list_extend(lines, {
-      "",
       "Chinese: " .. (entry.zh or ""),
       "",
-      "Example (zh): " .. (entry.exz or ""),
-      "",
       "Core: " .. (entry.core or ""),
-    })
+      "",
+      "Core (ja): " .. (entry.core_ja or ""),
+    }
+  else
+    local synonyms = entry.s and table.concat(entry.s, ", ") or ""
+    lines = {
+      "**" .. (entry.w or "") .. "**",
+      "",
+      "Definition: " .. (entry.en or ""),
+      "",
+      "Example: " .. (entry.ex or ""),
+      "",
+      "Synonyms: " .. synonyms,
+    }
+    if use_ja then
+      vim.list_extend(lines, {
+        "",
+        "Japanese: " .. (entry.ja or ""),
+        "",
+        "Example (ja): " .. (entry.exj or ""),
+        "",
+        "Core (ja): " .. (entry.core_ja or ""),
+      })
+    else
+      vim.list_extend(lines, {
+        "",
+        "Chinese: " .. (entry.zh or ""),
+        "",
+        "Example (zh): " .. (entry.exz or ""),
+        "",
+        "Core: " .. (entry.core or ""),
+      })
+    end
   end
 
   local width = math.min(72, math.max(40, vim.o.columns - 8))
@@ -1147,10 +1243,23 @@ end
 local function drill_entry_line(entry, width)
   local text = table.concat({
     entry.w or "",
+    entry.ipa_us or "",
     entry.ja or "",
     entry.zh or entry.core or "",
   }, " ")
   return truncate_display(text, width)
+end
+
+local function drill_sentence_line(entry, width)
+  local text = entry.ex or entry.w or ""
+  return truncate_display(text, width)
+end
+
+local function drill_target(entry)
+  if state.drill and state.drill.mode == "sentence" then
+    return entry.ex or entry.w or ""
+  end
+  return entry.w or ""
 end
 
 local function user_data_dir()
@@ -1246,9 +1355,19 @@ local function drill_render(entry)
   end
   drill.entry = entry
   drill.word = entry and entry.w or nil
+  local mode_label = drill.mode == "sentence" and "SENT" or "WORD"
+  local display_line
+  if not entry then
+    display_line = "No words"
+  elseif drill.mode == "sentence" then
+    display_line = drill_sentence_line(entry, drill.width)
+  else
+    display_line = drill_entry_line(entry, drill.width)
+  end
   vim.api.nvim_buf_set_lines(drill.buf, 0, -1, false, {
     "",
-    entry and drill_entry_line(entry, drill.width) or "No words",
+    display_line,
+    mode_label .. "  Tab:switch  ?:hint",
   })
   vim.api.nvim_buf_clear_namespace(drill.buf, drill.ns, 0, -1)
   if entry and word_seen(entry.w) then
@@ -1286,7 +1405,9 @@ local function drill_submit()
     drill_close()
     return
   end
-  if normalize(input) ~= normalize(drill.word) then
+  local target = drill_target(drill.entry)
+  local cmp = drill.mode == "sentence" and normalize_letters or normalize
+  if cmp(input) ~= cmp(target) then
     vim.api.nvim_buf_set_lines(drill.buf, 0, 1, false, { "" })
     if drill.win and vim.api.nvim_win_is_valid(drill.win) then
       vim.api.nvim_win_set_cursor(drill.win, { 1, 0 })
@@ -1384,6 +1505,59 @@ local function drill_stop_drag()
   end
 end
 
+local function drill_show_translation()
+  local drill = state.drill
+  if not drill or not drill.entry then
+    return
+  end
+  local e = drill.entry
+  local lines = {
+    e.w or "",
+    "UK " .. (e.ipa_uk or "") .. "  US " .. (e.ipa_us or ""),
+    "",
+    e.ex or "",
+    "",
+    "zh: " .. (e.exz or ""),
+    "ja: " .. (e.exj or ""),
+    "",
+    "zh: " .. (e.zh or ""),
+    "ja: " .. (e.ja or ""),
+    "",
+    "core: " .. (e.core or ""),
+    "core (ja): " .. (e.core_ja or ""),
+  }
+  local w = math.min(72, math.max(40, vim.o.columns - 8))
+  local h = math.min(#lines, math.max(14, vim.o.lines - 6))
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.bo[buf].bufhidden = "wipe"
+  vim.bo[buf].filetype = "markdown"
+  local win = vim.api.nvim_open_win(buf, true, {
+    relative = "editor",
+    row = math.floor((vim.o.lines - h) / 2),
+    col = math.floor((vim.o.columns - w) / 2),
+    width = w,
+    height = h,
+    border = "single",
+    title = " Translation ",
+    style = "minimal",
+  })
+  vim.keymap.set("n", "<Esc>", "<cmd>close<cr>", { buffer = buf, nowait = true, silent = true })
+  vim.keymap.set("n", "q", "<cmd>close<cr>", { buffer = buf, nowait = true, silent = true })
+  vim.keymap.set("n", "?", "<cmd>close<cr>", { buffer = buf, nowait = true, silent = true })
+end
+
+local function drill_toggle_mode()
+  local drill = state.drill
+  if not drill then
+    return
+  end
+  drill.mode = drill.mode == "sentence" and "word" or "sentence"
+  if drill.entry then
+    drill_render(drill.entry)
+  end
+end
+
 function M.words()
   if state.drill then
     drill_close()
@@ -1421,12 +1595,15 @@ function M.words()
     win = win,
     width = width,
     height = height,
+    mode = "word",
     ns = vim.api.nvim_create_namespace("vimquest_words"),
   }
 
   vim.keymap.set("i", "<CR>", drill_submit, { buffer = buf, nowait = true, silent = true })
   vim.keymap.set("n", "<CR>", drill_submit, { buffer = buf, nowait = true, silent = true })
   vim.keymap.set("n", "q", drill_close, { buffer = buf, nowait = true, silent = true })
+  vim.keymap.set({ "n", "i" }, "<Tab>", drill_toggle_mode, { buffer = buf, nowait = true, silent = true })
+  vim.keymap.set("n", "?", drill_show_translation, { buffer = buf, nowait = true, silent = true })
   vim.keymap.set({ "n", "i" }, "<RightMouse>", drill_start_drag, { buffer = buf, nowait = true, silent = true })
   vim.keymap.set({ "n", "i" }, "<RightDrag>", drill_drag, { buffer = buf, nowait = true, silent = true })
   vim.keymap.set({ "n", "i" }, "<RightRelease>", drill_stop_drag, { buffer = buf, nowait = true, silent = true })
