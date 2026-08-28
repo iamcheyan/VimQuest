@@ -273,10 +273,10 @@ The hint is task-aware by file path and line number. If the cursor is not exactl
 Current files:
 
 ```text
-config/nvim/lua/plugins/vimquest.lua
-config/nvim/lua/vimquest/init.lua
-config/nvim/lua/vimquest/data/ogden-850-words.json
-config/nvim/lua/vimquest/docs/design.md
+dot_config/nvim-private/lua/plugins/vimquest.lua
+dot_config/nvim-private/lua/vimquest/init.lua
+dot_config/nvim-private/lua/vimquest/data/ogden-850-words.json
+dot_config/nvim-private/lua/vimquest/docs/design.md
 ```
 
 `lua/plugins/vimquest.lua` registers the local plugin through lazy.nvim:
