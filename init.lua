@@ -828,54 +828,39 @@ function M.tasks()
     return
   end
 
-  local ok, pickers = pcall(require, "telescope.pickers")
+  -- Telescope was removed from this configuration, so the previous picker path
+  -- could only ever print "Telescope is not available" and do nothing. Snacks is
+  -- the picker used everywhere else in this config.
+  local ok, snacks = pcall(require, "snacks")
   if not ok then
-    notify("Telescope is not available.", vim.log.levels.WARN)
+    notify("Snacks picker is not available.", vim.log.levels.WARN)
     return
   end
-  local finders = require("telescope.finders")
-  local conf = require("telescope.config").values
-  local actions = require("telescope.actions")
-  local action_state = require("telescope.actions.state")
 
-  local results = {}
+  local items = {}
   for index, task in ipairs(state.tasks) do
-    table.insert(results, {
+    table.insert(items, {
       index = index,
       task = task,
-      display = task_label(index, task),
-      ordinal = task_search_text(index, task),
+      text = task_label(index, task),
     })
   end
 
-  pickers
-    .new({}, {
-      prompt_title = "VimQuest Tasks",
-      finder = finders.new_table({
-        results = results,
-        entry_maker = function(entry)
-          return {
-            value = entry,
-            display = entry.display,
-            ordinal = entry.ordinal,
-          }
-        end,
-      }),
-      sorter = conf.generic_sorter({}),
-      attach_mappings = function(prompt_bufnr)
-        actions.select_default:replace(function()
-          local selection = action_state.get_selected_entry()
-          actions.close(prompt_bufnr)
-          if not selection then
-            return
-          end
-          state.current = selection.value.index
-          open_task(state.current)
-        end)
-        return true
-      end,
-    })
-    :find()
+  snacks.picker.pick({
+    title = "VimQuest Tasks",
+    items = items,
+    format = function(item)
+      return { { item.text, "Normal" } }
+    end,
+    confirm = function(picker, item)
+      picker:close()
+      if not item then
+        return
+      end
+      state.current = item.index
+      open_task(state.current)
+    end,
+  })
 end
 
 function M.next_round()
