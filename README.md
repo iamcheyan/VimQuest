@@ -106,3 +106,15 @@ The default word list is based on Ogden's Basic English (850 words), with Chines
 ## Requirements
 
 - Neovim >= 0.8
+
+## Standalone lazy.nvim installation
+
+```lua
+{
+  "iamcheyan/VimQuest",
+  config = function() require("vimquest").setup() end,
+}
+```
+
+The plugin uses the standard `lua/vimquest/` layout. Dictionaries are bundled
+under `lua/vimquest/data/`; progress stays in Neovim's data directory.
